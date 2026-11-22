@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "personal-okf-wiki"
+version = "2.3.0"
+description = "Personal OKF-Wiki: Extractable modular personal knowledge base engine (Karpathy LLM Wiki x Google OKF v0.3)"
+readme = "AGENTS.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pydantic>=2.0",
+    "PyYAML>=6.0",
+    "watchdog>=3.0",
+    "jieba>=0.42.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+]
+
+[project.scripts]
+kb = "kb_engine.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
