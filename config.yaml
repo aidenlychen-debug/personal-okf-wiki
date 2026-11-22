@@ -1,0 +1,43 @@
+project:
+  name: "Personal OKF-Wiki"
+  language: "zh-CN"
+
+inbox:
+  path: "inbox"
+  cleanup_mode: "archive"             # archive（移入 inbox/.processed/）| delete
+  archive_retention_days: 7           # .processed/ 过期自动清理天数
+  debounce_seconds: 1.5               # macOS 文件写入稳定防抖秒数
+
+watch_folders: []                     # 外部只读目录列表，例如: ["/Users/me/Books/Clippings"]
+
+scanner:
+  poll_interval_seconds: 30           # 外部只读目录增量扫描周期
+  ignore_globs:
+    - ".*"
+    - "~$*"
+    - "*.tmp"
+    - "*.part"
+    - "*.crdownload"
+    - "Thumbs.db"
+
+retrieval:
+  default_l1_limit: 50                # L1 单次返回上限（配合 truncated 标志按需翻页）
+  default_l2_top_k: 10                # L2 默认展开完整正文的页面数上限
+  max_expanded_evidences: 15          # evidence 强制展开上限，防大库撑爆上下文
+  fts_weights:
+    title: 10.0
+    aliases: 8.0
+    tags: 6.0
+    summary: 4.0
+    body: 1.0
+
+safety:
+  auto_git_commit: true               # 编译前后自动提交 Git 快照
+  write_lock_timeout_seconds: 10      # 全局写锁等待超时秒数
+  max_shrinkage_ratio: 0.30           # 相对 base_commit_sha 允许的最大字符缩水比例
+  enforce_human_blocks: true          # 字节级强制校验 human 区块不被篡改
+  enforce_verified_append_only: true  # 对 verified 非空页面校验非严格前缀追加
+  block_unexpected_deletions: true    # 拦截 AI 意外删除已有 wiki 页面
+
+adapters:
+  enabled: ["text", "image"]          # 后续扩展仅需追加 "pdf" / "url" / "audio"
