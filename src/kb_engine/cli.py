@@ -665,11 +665,104 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _emit_output(data: dict[str, Any], as_json: bool) -> None:
+def _format_human_output(command: str, data: dict[str, Any]) -> str:
+    """Render concise human-readable terminal output when --json is not set."""
+    if command == "status":
+        wp = data["wiki_pages"]
+        rd = data["raw_documents"]
+        w = data["watcher"]
+        by_type = ", ".join(f"{k}:{v}" for k, v in sorted(wp["by_type"].items())) or "无"
+        lines = [
+            f"知识库: {data['project']} ({data['root_dir']})",
+            f"Wiki 页面: {wp['total']} 篇 ({by_type}) | 断链: {wp['broken_links']}",
+            (
+                f"Raw 档案: {rd['total']} 份 "
+                f"(待编译:{rd['pending_compile']} / 编译中:{rd['compiling']} / 已编译:{rd['compiled']} / 失败:{rd['failed']})"
+            ),
+            f"守护进程: {'运行中 (PID ' + str(w['pid']) + ')' if w['running'] else '未运行'}",
+            f"活跃事务: {data['active_session']['session_id'] + ' [' + data['active_session']['status'] + ']' if data['active_session'] else '无'}",
+        ]
+        if data["recent_commits"]:
+            latest = data["recent_commits"][0]
+            lines.append(f"最近快照: {latest['sha'][:8]} {latest['subject']}")
+        return "\n".join(lines) + "\n"
+
+    if command == "query":
+        st = data["stats"]
+        lines = [
+            f"查询: 「{data['query']}」 | 耗时: {data['latency_ms']}ms | "
+            f"直接命中: {st['direct_hits']} | 1跳邻居: {st['graph_neighbors']} | 截断: {st['truncated']}"
+        ]
+        for idx, item in enumerate(data["l1_inventory"], 1):
+            lines.append(
+                f"  {idx}. [{item['type']}] {item['title']} ({item['rel_path']}) "
+                f"[{item['hit_source']}, score={item['score']}]"
+            )
+            if item.get("summary"):
+                lines.append(f"     摘要: {item['summary']}")
+        if data["graph_neighbors"]:
+            lines.append("关联邻居（1跳）:")
+            for nb in data["graph_neighbors"][:10]:
+                lines.append(
+                    f"  - [{nb['type']}] {nb['title']} ({nb['rel_path']}) "
+                    f"<- {nb['direction']} via {nb['linked_via']}"
+                )
+        return "\n".join(lines) + "\n"
+
+    if command == "lint":
+        status_str = "通过 (0 errors)" if data["ok"] else f"失败 ({data['error_count']} errors)"
+        lines = [f"OKF 巡检结果: {status_str} | 警告: {data['warning_count']}"]
+        for err in data["errors"]:
+            lines.append(f"  [ERROR:{err['code']}] {err['path']}: {err['message']}")
+        for warn in data["warnings"]:
+            lines.append(f"  [WARN:{warn['code']}] {warn['path']}: {warn['message']}")
+        return "\n".join(lines) + "\n"
+
+    if command == "eval":
+        m = data["metrics"]
+        lines = [
+            f"评测完成 ({data['total_cases']} 条用例): "
+            f"Recall={m['recall']:.2%} | Precision={m['precision']:.2%} | "
+            f"负向误报={m['negative_false_positives']}/{m['negative_cases']} | "
+            f"延迟 avg={m['avg_latency_ms']}ms / max={m['max_latency_ms']}ms"
+        ]
+        for r in data["results"]:
+            flag = "PASS" if r["passed"] else "FAIL"
+            lines.append(f"  [{flag}] {r['id']} («{r['query']}», {r['latency_ms']}ms)")
+        return "\n".join(lines) + "\n"
+
+    if command == "scan":
+        return (
+            f"扫描完成: 新增入库 {data['ingested_count']} | 重复跳过 {data['duplicate_count']} | "
+            f"未变更跳过 {data['skipped_unchanged_count']} | 清理过期暂存 {data['purged_processed_count']}\n"
+        )
+
+    if command == "compile-commit":
+        return (
+            f"提交成功: session={data['session_id']} | commit={data.get('commit_sha') or 'skipped'} | "
+            f"已编译={data['compiled_count']} | 失败隔离={data['failed_count']}\n"
+        )
+
+    if command == "recover":
+        return (
+            f"恢复完成: action={data['action']} | session={data['session_id']} | "
+            f"recovery_ref={data['recovery_ref']} | reset={data['reset_to_pending_count']}\n"
+        )
+
+    if command == "refactor":
+        return (
+            f"重命名完成: {data['old_path']} -> {data['new_path']} | "
+            f"入链重写={data['rewritten_links_count']} | 出链重写={data.get('outgoing_links_rewritten_count', 0)}\n"
+        )
+
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _emit_output(command: str, data: dict[str, Any], as_json: bool) -> None:
     if as_json:
         sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     else:
-        sys.stdout.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        sys.stdout.write(_format_human_output(command, data))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -693,7 +786,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "init":
             result = cmd_init(root_dir)
-            _emit_output(result, as_json)
+            _emit_output("init", result, as_json)
             return 0
 
         config = load_config(root_dir)
@@ -764,7 +857,7 @@ def main(argv: list[str] | None = None) -> int:
                 allow_shrinkage=args.allow_shrinkage,
                 allow_delete=args.allow_delete,
             )
-            _emit_output(result, as_json)
+            _emit_output("lint", result, as_json)
             return 0 if result["ok"] else 1
         elif args.command == "eval":
             cases_p = Path(args.cases)
@@ -784,7 +877,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             raise KBError(ErrorCode.INVALID_ARGUMENT, f"未知命令: {args.command}")
 
-        _emit_output(result, as_json)
+        _emit_output(args.command, result, as_json)
         return 0
 
     except KBError as exc:

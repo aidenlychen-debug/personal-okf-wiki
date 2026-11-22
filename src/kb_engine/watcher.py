@@ -19,6 +19,7 @@ from typing import Any
 
 from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 
 from kb_engine.adapters import AdapterRegistry, ImageAdapter, TextAdapter, build_default_registry
 from kb_engine.adapters.image_adapter import render_image_stub
@@ -478,11 +479,26 @@ def run_watcher(
         prev_sigint = signal.signal(signal.SIGINT, _handle_signal)
         prev_sigterm = signal.signal(signal.SIGTERM, _handle_signal)
 
-    observer = Observer()
     handler = _InboxEventHandler(trigger_scan, inbox_dir, config.scanner.ignore_globs)
+    observer: Any = Observer()
     observer.schedule(handler, str(inbox_dir), recursive=True)
-    observer.start()
-    logger.info("kb watch started (pid=%s, inbox=%s)", os.getpid(), inbox_dir)
+    try:
+        observer.start()
+        time.sleep(0.15)
+        emitters_alive = all(e.is_alive() for e in observer.emitters) if observer.emitters else False
+        if not observer.is_alive() or not emitters_alive:
+            raise RuntimeError("native observer emitter failed to start")
+        observer_mode = type(observer).__name__
+    except Exception as exc:
+        logger.warning("native observer unavailable (%s); falling back to PollingObserver", exc)
+        with contextlib.suppress(Exception):
+            observer.stop()
+            observer.join(timeout=1.0)
+        observer = PollingObserver(timeout=0.5)
+        observer.schedule(handler, str(inbox_dir), recursive=True)
+        observer.start()
+        observer_mode = "PollingObserver"
+    logger.info("kb watch started (pid=%s, mode=%s, inbox=%s)", os.getpid(), observer_mode, inbox_dir)
 
     try:
         # Initial scan on startup

@@ -27,6 +27,7 @@ _FENCED_SPLIT_RE = re.compile(r"(```[^\n]*\n.*?\n```)", re.DOTALL)
 _INLINE_CODE_SPLIT_RE = re.compile(r"(`[^`\n]+`)")
 _MD_LINK_TOKEN_RE = re.compile(r"(!?\[[^\]]*\]\()([^)\n]+)(\))")
 _FM_TITLE_RE = re.compile(r'^(title\s*:\s*)(.*)$', re.MULTILINE)
+_FM_REF_RE = re.compile(r'^(\s*ref\s*:\s*)(["\']?)([^"\'\n]+)\2(\s*)$', re.MULTILINE)
 _H1_LINE_RE = re.compile(r"^(#\s+)(.+)$", re.MULTILINE)
 
 
@@ -79,7 +80,6 @@ def _rewrite_links_in_text(
             is_image = prefix.startswith("!")
             trimmed = raw_target.strip()
 
-            # Preserve optional link title if present
             link_title_tail = ""
             target_core = trimmed
             title_match = re.match(r'^(\S+)(\s+["\'].*["\'])$', trimmed)
@@ -113,6 +113,90 @@ def _rewrite_links_in_text(
     return "".join(out_chunks), replaced_count
 
 
+def _rewrite_outgoing_links_for_moved_file(
+    text: str,
+    *,
+    old_source_abs: Path,
+    new_source_abs: Path,
+    root_dir: Path,
+) -> tuple[str, int]:
+    """Rewrite outgoing relative links & YAML sources[].ref when a page moves across directories."""
+    if old_source_abs.resolve().parent == new_source_abs.resolve().parent:
+        return text, 0
+
+    old_resolved = old_source_abs.resolve()
+    new_resolved = new_source_abs.resolve()
+    replaced_count = 0
+
+    norm = normalize_newlines(text)
+    fm_block = ""
+    body_block = norm
+    if norm.startswith("---\n"):
+        end_idx = norm.find("\n---", 4)
+        if end_idx != -1:
+            fm_block = norm[: end_idx + 4]
+            body_block = norm[end_idx + 4 :]
+
+    # 1. Rewrite YAML frontmatter sources[].ref relative paths
+    if fm_block:
+        def _fm_ref_repl(match: re.Match[str]) -> str:
+            nonlocal replaced_count
+            lead, quote, raw_ref, tail = match.group(1), match.group(2), match.group(3), match.group(4)
+            resolved = classify_and_resolve_link(old_resolved, raw_ref, False, root_dir)
+            if resolved.kind in ("external", "anchor") or resolved.target_abs_path is None:
+                return match.group(0)
+            target_abs = new_resolved if resolved.target_abs_path.resolve() == old_resolved else resolved.target_abs_path
+            new_rel = _compute_relative_md_link(new_resolved, target_abs)
+            if new_rel != raw_ref:
+                replaced_count += 1
+            return f"{lead}{quote}{new_rel}{resolved.anchor}{quote}{tail}"
+
+        fm_block = _FM_REF_RE.sub(_fm_ref_repl, fm_block)
+
+    # 2. Rewrite Markdown outgoing links in body (skipping code blocks)
+    def _replace_body_plain(segment: str) -> str:
+        nonlocal replaced_count
+
+        def _repl(match: re.Match[str]) -> str:
+            nonlocal replaced_count
+            prefix, raw_target, suffix = match.group(1), match.group(2), match.group(3)
+            is_image = prefix.startswith("!")
+            trimmed = raw_target.strip()
+
+            link_title_tail = ""
+            target_core = trimmed
+            title_match = re.match(r'^(\S+)(\s+["\'].*["\'])$', trimmed)
+            if title_match:
+                target_core = title_match.group(1)
+                link_title_tail = title_match.group(2)
+
+            resolved = classify_and_resolve_link(old_resolved, target_core, is_image, root_dir)
+            if resolved.kind in ("external", "anchor") or resolved.target_abs_path is None:
+                return match.group(0)
+
+            target_abs = new_resolved if resolved.target_abs_path.resolve() == old_resolved else resolved.target_abs_path
+            new_rel = _compute_relative_md_link(new_resolved, target_abs)
+            if new_rel != target_core:
+                replaced_count += 1
+            return f"{prefix}{new_rel}{resolved.anchor}{link_title_tail}{suffix}"
+
+        return _MD_LINK_TOKEN_RE.sub(_repl, segment)
+
+    body_chunks: list[str] = []
+    for fenced_chunk in _FENCED_SPLIT_RE.split(body_block):
+        if fenced_chunk.startswith("```"):
+            body_chunks.append(fenced_chunk)
+            continue
+        inline_parts = _INLINE_CODE_SPLIT_RE.split(fenced_chunk)
+        for idx, part in enumerate(inline_parts):
+            if idx % 2 == 1:
+                body_chunks.append(part)
+            else:
+                body_chunks.append(_replace_body_plain(part))
+
+    return fm_block + "".join(body_chunks), replaced_count
+
+
 def _update_title_in_markdown(text: str, new_title: str) -> str:
     norm = normalize_newlines(text)
     clean_title = normalize_nfc(new_title).strip()
@@ -139,7 +223,7 @@ def rename_wiki_page(
     *,
     new_title: str | None = None,
 ) -> dict[str, Any]:
-    """Deterministically rename a wiki page, rewrite all incoming relative links, reindex & commit."""
+    """Deterministically rename/move a wiki page, rewrite all incoming & outgoing links, reindex & commit."""
     wiki_dir = root_dir / "wiki"
     old_wiki_rel = _strip_wiki_prefix(old_rel)
     new_wiki_rel = _sanitize_wiki_rel_path(new_rel)
@@ -167,6 +251,14 @@ def rename_wiki_page(
         content = normalize_newlines(old_abs.read_text(encoding="utf-8"))
         if new_title:
             content = _update_title_in_markdown(content, new_title)
+
+        # Rewrite moved file's own outgoing relative links & YAML sources[].ref if directory depth changed
+        content, outgoing_rewritten = _rewrite_outgoing_links_for_moved_file(
+            content,
+            old_source_abs=old_abs,
+            new_source_abs=new_abs,
+            root_dir=root_dir,
+        )
 
         # Write atomically to new path and remove old path
         new_abs.parent.mkdir(parents=True, exist_ok=True)
@@ -216,6 +308,7 @@ def rename_wiki_page(
         "updated_title": new_title,
         "rewritten_files": updated_files,
         "rewritten_links_count": total_rewritten_links,
+        "outgoing_links_rewritten_count": outgoing_rewritten,
         "commit_sha": commit_sha,
         **index_stats,
     }
