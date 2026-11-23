@@ -1,4 +1,4 @@
-"""Deterministic page renaming and vault-wide relative Markdown link rewriting."""
+"""Deterministic page renaming, page merging, and vault-wide relative Markdown link rewriting."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 from kb_engine.config import KBConfig
 from kb_engine.db import db_session
@@ -18,6 +20,7 @@ from kb_engine.utils import (
     normalize_newlines,
     normalize_nfc,
     normalize_rel_path,
+    parse_frontmatter,
     run_git,
     sanitize_filename,
     write_lock,
@@ -309,6 +312,202 @@ def rename_wiki_page(
         "rewritten_files": updated_files,
         "rewritten_links_count": total_rewritten_links,
         "outgoing_links_rewritten_count": outgoing_rewritten,
+        "commit_sha": commit_sha,
+        **index_stats,
+    }
+
+
+def _merge_unique_str_list(base: Any, extra: Any) -> list[str]:
+    merged: list[str] = []
+    seen: set[str] = set()
+    for seq in (base, extra):
+        if seq is None:
+            continue
+        items = seq if isinstance(seq, list) else [seq]
+        for item in items:
+            val = normalize_nfc(str(item)).strip()
+            if val and val.lower() not in seen:
+                seen.add(val.lower())
+                merged.append(val)
+    return merged
+
+
+def _dump_markdown_with_frontmatter(meta: dict[str, Any], body: str) -> str:
+    fm_str = yaml.safe_dump(meta, allow_unicode=True, sort_keys=False, default_flow_style=False).strip()
+    clean_body = body.lstrip("\n")
+    if clean_body and not clean_body.endswith("\n"):
+        clean_body += "\n"
+    return f"---\n{fm_str}\n---\n\n{clean_body}"
+
+
+def merge_wiki_pages(
+    root_dir: Path,
+    config: KBConfig,
+    source_rel: str,
+    target_rel: str,
+    *,
+    delete_source: bool = False,
+) -> dict[str, Any]:
+    """Deterministically merge source_rel into target_rel, rewrite incoming links, and retire source."""
+    wiki_dir = root_dir / "wiki"
+    src_wiki_rel = _strip_wiki_prefix(source_rel)
+    tgt_wiki_rel = _strip_wiki_prefix(target_rel)
+
+    if src_wiki_rel in ("index.md", "log.md") or tgt_wiki_rel in ("index.md", "log.md"):
+        raise KBError(ErrorCode.INVALID_ARGUMENT, "禁止合并系统受控文件 index.md 或 log.md。")
+
+    src_abs = (wiki_dir / src_wiki_rel).resolve()
+    tgt_abs = (wiki_dir / tgt_wiki_rel).resolve()
+    if src_abs == tgt_abs:
+        raise KBError(ErrorCode.INVALID_ARGUMENT, "源页面与目标页面不能相同。")
+
+    with write_lock(root_dir, config.safety.write_lock_timeout_seconds):
+        if not src_abs.exists() or not src_abs.is_file():
+            raise KBError(
+                ErrorCode.FILE_NOT_FOUND,
+                f"待合并的源页面不存在: wiki/{src_wiki_rel}",
+                details={"source_path": f"wiki/{src_wiki_rel}"},
+            )
+        if not tgt_abs.exists() or not tgt_abs.is_file():
+            raise KBError(
+                ErrorCode.FILE_NOT_FOUND,
+                f"合并目标页面不存在: wiki/{tgt_wiki_rel}",
+                details={"target_path": f"wiki/{tgt_wiki_rel}"},
+            )
+
+        src_text = normalize_newlines(src_abs.read_text(encoding="utf-8"))
+        tgt_text = normalize_newlines(tgt_abs.read_text(encoding="utf-8"))
+
+        src_meta_raw, src_body, src_err = parse_frontmatter(src_text)
+        tgt_meta_raw, tgt_body, tgt_err = parse_frontmatter(tgt_text)
+        if src_err or tgt_err:
+            raise KBError(
+                ErrorCode.OKF_SCHEMA_ERROR,
+                f"合并失败，Frontmatter 解析错误: {src_err or tgt_err}",
+            )
+
+        src_meta = dict(src_meta_raw or {})
+        tgt_meta = dict(tgt_meta_raw or {})
+
+        src_title = normalize_nfc(str(src_meta.get("title") or src_abs.stem)).strip()
+        tgt_title = normalize_nfc(str(tgt_meta.get("title") or tgt_abs.stem)).strip()
+
+        # Merge aliases (including source title if distinct from target title)
+        extra_aliases = list(src_meta.get("aliases") or []) if isinstance(src_meta.get("aliases"), list) else ([src_meta["aliases"]] if src_meta.get("aliases") else [])
+        if src_title and src_title.lower() != tgt_title.lower():
+            extra_aliases.insert(0, src_title)
+        merged_aliases = _merge_unique_str_list(tgt_meta.get("aliases"), extra_aliases)
+        if merged_aliases:
+            tgt_meta["aliases"] = merged_aliases
+
+        # Merge tags, layers, mechanisms
+        merged_tags = _merge_unique_str_list(tgt_meta.get("tags"), src_meta.get("tags"))
+        if merged_tags:
+            tgt_meta["tags"] = merged_tags
+        merged_layers = _merge_unique_str_list(tgt_meta.get("layers"), src_meta.get("layers"))
+        if merged_layers:
+            tgt_meta["layers"] = [lv.upper() for lv in merged_layers]
+        merged_mechanisms = _merge_unique_str_list(tgt_meta.get("mechanisms"), src_meta.get("mechanisms"))
+        if merged_mechanisms:
+            tgt_meta["mechanisms"] = merged_mechanisms
+
+        # Merge sources[] (rewriting relative refs if directory depth differs)
+        tgt_sources = list(tgt_meta.get("sources") or []) if isinstance(tgt_meta.get("sources"), list) else []
+        seen_refs: set[str] = set()
+        for s in tgt_sources:
+            if isinstance(s, dict) and s.get("ref"):
+                seen_refs.add(str(s["ref"]).strip())
+        src_sources = src_meta.get("sources")
+        if isinstance(src_sources, list):
+            next_idx = len(tgt_sources) + 1
+            for s in src_sources:
+                if not isinstance(s, dict) or not s.get("ref"):
+                    continue
+                raw_ref = str(s["ref"]).strip()
+                resolved = classify_and_resolve_link(src_abs, raw_ref, False, root_dir)
+                if resolved.kind not in ("external", "anchor") and resolved.target_abs_path is not None:
+                    new_ref = _compute_relative_md_link(tgt_abs, resolved.target_abs_path) + resolved.anchor
+                else:
+                    new_ref = raw_ref
+                if new_ref not in seen_refs:
+                    seen_refs.add(new_ref)
+                    entry = dict(s)
+                    entry["id"] = f"s{next_idx}"
+                    entry["ref"] = new_ref
+                    tgt_sources.append(entry)
+                    next_idx += 1
+        if tgt_sources:
+            tgt_meta["sources"] = tgt_sources
+
+        # Rewrite source body outgoing links if moving across directories, then strip leading H1
+        src_body_rewritten, _ = _rewrite_outgoing_links_for_moved_file(
+            src_body,
+            old_source_abs=src_abs,
+            new_source_abs=tgt_abs,
+            root_dir=root_dir,
+        )
+        src_body_clean = re.sub(r"^\s*#\s+[^\n]+\n*", "", src_body_rewritten, count=1).strip()
+        if not src_body_clean:
+            src_body_clean = normalize_nfc(str(src_meta.get("summary") or "（无正文补充）")).strip()
+
+        # Strictly append-only on target body to preserve verified pages & human blocks
+        new_tgt_body = f"{tgt_body.rstrip()}\n\n## 合并补充（来自 {src_title}）\n\n{src_body_clean}\n"
+        atomic_write_text(tgt_abs, _dump_markdown_with_frontmatter(tgt_meta, new_tgt_body))
+
+        # Retire source page: delete or mark deprecated + superseded_by
+        if delete_source:
+            src_abs.unlink()
+            source_action = "deleted"
+        else:
+            rel_to_tgt = _compute_relative_md_link(src_abs, tgt_abs)
+            src_meta["status"] = "deprecated"
+            src_meta["superseded_by"] = rel_to_tgt
+            atomic_write_text(src_abs, _dump_markdown_with_frontmatter(src_meta, src_body))
+            source_action = "deprecated"
+
+        # Rewrite all incoming Markdown links across wiki/ (excluding retired source itself)
+        updated_files: list[str] = []
+        total_rewritten_links = 0
+        for file_path in iter_wiki_content_files(root_dir):
+            if file_path.resolve() == src_abs:
+                continue
+            orig = normalize_newlines(file_path.read_text(encoding="utf-8"))
+            rewritten, count = _rewrite_links_in_text(
+                orig,
+                source_file=file_path,
+                old_target_abs=src_abs,
+                new_target_abs=tgt_abs,
+                root_dir=root_dir,
+            )
+            if count > 0 and rewritten != orig:
+                atomic_write_text(file_path, rewritten)
+                updated_files.append(f"wiki/{normalize_rel_path(file_path.relative_to(wiki_dir))}")
+                total_rewritten_links += count
+
+        with db_session(root_dir) as conn:
+            index_stats = reindex_wiki_in_conn(root_dir, conn, regenerate_index=True, config=config)
+
+        commit_sha: str | None = None
+        if config.safety.auto_git_commit and (root_dir / ".git").exists():
+            if git_has_changes(root_dir, ["wiki"]):
+                run_git(root_dir, ["add", "-A", "--", "wiki"])
+                run_git(
+                    root_dir,
+                    [
+                        "commit",
+                        "-m",
+                        f"refactor(wiki): merge {src_wiki_rel} -> {tgt_wiki_rel}",
+                    ],
+                )
+                commit_sha = run_git(root_dir, ["rev-parse", "HEAD"]).stdout.strip()
+
+    return {
+        "ok": True,
+        "source_path": f"wiki/{src_wiki_rel}",
+        "target_path": f"wiki/{tgt_wiki_rel}",
+        "source_action": source_action,
+        "rewritten_files": updated_files,
+        "rewritten_links_count": total_rewritten_links,
         "commit_sha": commit_sha,
         **index_stats,
     }

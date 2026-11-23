@@ -51,8 +51,14 @@ CREATE TABLE IF NOT EXISTS wiki_pages (
     visibility TEXT NOT NULL DEFAULT 'private',
     tags_json TEXT NOT NULL DEFAULT '[]',
     aliases_json TEXT NOT NULL DEFAULT '[]',
+    reading_status TEXT NOT NULL DEFAULT '',
+    experience_type TEXT NOT NULL DEFAULT '',
+    origin TEXT NOT NULL DEFAULT '',
+    layers_json TEXT NOT NULL DEFAULT '[]',
+    mechanisms_json TEXT NOT NULL DEFAULT '[]',
     is_verified INTEGER NOT NULL DEFAULT 0,
     stale_after TEXT,
+    superseded_by TEXT,
     char_count INTEGER NOT NULL DEFAULT 0,
     content_hash TEXT NOT NULL,
     body TEXT NOT NULL,
@@ -65,17 +71,60 @@ CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
     title_seg,
     aliases_seg,
     tags_seg,
+    mechanisms_seg,
     summary_seg,
     body_seg,
     tokenize='unicode61 remove_diacritics 2'
 );
 
--- 5. Wiki 内部相对链接图谱表
+-- 4B. 段落级结构表与段落级全文检索（消除长页稀释与跨段误匹配，支撑增量向量缓存）
+CREATE TABLE IF NOT EXISTS wiki_sections (
+    section_id TEXT PRIMARY KEY,
+    rel_path TEXT NOT NULL,
+    section_order INTEGER NOT NULL,
+    heading TEXT NOT NULL,
+    content TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS wiki_sections_fts USING fts5(
+    section_id UNINDEXED,
+    rel_path UNINDEXED,
+    heading_seg,
+    content_seg,
+    tokenize='unicode61 remove_diacritics 2'
+);
+
+-- 4C. 段落级增量向量缓存表（仅对新增/变更段落重算 Embedding）
+CREATE TABLE IF NOT EXISTS wiki_section_embeddings (
+    section_id TEXT PRIMARY KEY,
+    rel_path TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    dim INTEGER NOT NULL,
+    vector_blob BLOB NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- 4D. 引擎元数据表（记录向量模型版本等）
+CREATE TABLE IF NOT EXISTS kb_meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+-- 5. Wiki 内部相对链接与轻量类型化关系图谱表
 CREATE TABLE IF NOT EXISTS wiki_links (
     source_path TEXT NOT NULL,
     target_path TEXT NOT NULL,
     raw_link TEXT NOT NULL,
     is_broken INTEGER NOT NULL DEFAULT 0,
+    link_source TEXT NOT NULL DEFAULT 'body',
+    relation_type TEXT NOT NULL DEFAULT 'mentions',
+    relation_status TEXT NOT NULL DEFAULT 'confirmed',
+    relation_layer TEXT NOT NULL DEFAULT '',
+    relation_reason TEXT NOT NULL DEFAULT '',
     PRIMARY KEY (source_path, target_path, raw_link)
 );
 
@@ -86,15 +135,92 @@ CREATE TABLE IF NOT EXISTS provenance_map (
     PRIMARY KEY (raw_content_hash, wiki_rel_path)
 );
 
+-- 7. 轻量查询遥测表（仅记录真实用户查询，供 kb evolve-report 诊断召回痛点）
+CREATE TABLE IF NOT EXISTS query_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    query_text TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'creator',
+    direct_hits INTEGER NOT NULL DEFAULT 0,
+    strict_hits INTEGER NOT NULL DEFAULT 0,
+    fallback_used INTEGER NOT NULL DEFAULT 0,
+    confidence_warning TEXT,
+    top_score REAL NOT NULL DEFAULT 0.0,
+    latency_ms REAL NOT NULL DEFAULT 0.0,
+    created_at TEXT NOT NULL
+);
+
+-- 8. 自适应架构自迭代检查点表（记录收益、能力上限休眠与退避间隔）
+CREATE TABLE IF NOT EXISTS evolution_checkpoints (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    compiled_raw_total INTEGER NOT NULL,
+    wiki_pages_total INTEGER NOT NULL,
+    outcome TEXT NOT NULL,
+    next_interval INTEGER NOT NULL,
+    summary TEXT NOT NULL DEFAULT '',
+    metrics_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_raw_documents_state ON raw_documents(state);
 CREATE INDEX IF NOT EXISTS idx_raw_documents_session ON raw_documents(session_id);
 CREATE INDEX IF NOT EXISTS idx_raw_documents_origin ON raw_documents(origin_path);
 CREATE INDEX IF NOT EXISTS idx_wiki_links_target ON wiki_links(target_path);
+CREATE INDEX IF NOT EXISTS idx_wiki_sections_rel_path ON wiki_sections(rel_path);
+CREATE INDEX IF NOT EXISTS idx_wiki_section_emb_model ON wiki_section_embeddings(model);
+CREATE INDEX IF NOT EXISTS idx_query_logs_created ON query_logs(created_at);
 """
 
 
 def get_db_path(root_dir: Path) -> Path:
     return root_dir / ".kb" / "kb.db"
+
+
+def _ensure_migrations(conn: sqlite3.Connection) -> None:
+    """Apply lightweight additive column migrations for existing .kb/kb.db files."""
+    page_cols = {row["name"] for row in conn.execute("PRAGMA table_info(wiki_pages)").fetchall()}
+    if page_cols:
+        page_additions = [
+            ("superseded_by", "TEXT"),
+            ("reading_status", "TEXT NOT NULL DEFAULT ''"),
+            ("experience_type", "TEXT NOT NULL DEFAULT ''"),
+            ("origin", "TEXT NOT NULL DEFAULT ''"),
+            ("layers_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ("mechanisms_json", "TEXT NOT NULL DEFAULT '[]'"),
+        ]
+        for col_name, col_def in page_additions:
+            if col_name not in page_cols:
+                conn.execute(f"ALTER TABLE wiki_pages ADD COLUMN {col_name} {col_def}")
+
+    link_cols = {row["name"] for row in conn.execute("PRAGMA table_info(wiki_links)").fetchall()}
+    if link_cols:
+        link_additions = [
+            ("link_source", "TEXT NOT NULL DEFAULT 'body'"),
+            ("relation_type", "TEXT NOT NULL DEFAULT 'mentions'"),
+            ("relation_status", "TEXT NOT NULL DEFAULT 'confirmed'"),
+            ("relation_layer", "TEXT NOT NULL DEFAULT ''"),
+            ("relation_reason", "TEXT NOT NULL DEFAULT ''"),
+        ]
+        for col_name, col_def in link_additions:
+            if col_name not in link_cols:
+                conn.execute(f"ALTER TABLE wiki_links ADD COLUMN {col_name} {col_def}")
+
+    fts_cols = {row["name"] for row in conn.execute("PRAGMA table_info(wiki_fts)").fetchall()}
+    if fts_cols and "mechanisms_seg" not in fts_cols:
+        conn.execute("DROP TABLE wiki_fts")
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE wiki_fts USING fts5(
+                rel_path UNINDEXED,
+                title_seg,
+                aliases_seg,
+                tags_seg,
+                mechanisms_seg,
+                summary_seg,
+                body_seg,
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
 
 
 def connect_db(root_dir: Path, *, ensure_schema: bool = True) -> sqlite3.Connection:
@@ -109,6 +235,7 @@ def connect_db(root_dir: Path, *, ensure_schema: bool = True) -> sqlite3.Connect
     conn.execute("PRAGMA busy_timeout=5000;")
     if ensure_schema:
         conn.executescript(SCHEMA_DDL)
+        _ensure_migrations(conn)
     return conn
 
 

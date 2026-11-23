@@ -47,9 +47,11 @@ kb compile-begin --limit 10 --json
 ### 4. 结合总目录执行中文原子编译（英文进，中文出）
 先阅读 `wiki/index.md` 掌握现有概念、案例、证据与洞察，避免重复造轮子：
 - **拆解策略**：每份原始资料通常编译为 **1 篇 `source` 精读卡**（`wiki/sources/`）+ **N 篇原子页**（按内容归入 `wiki/concepts/`、`wiki/cases/`、`wiki/evidences/`、`wiki/insights/`）。
-- **中文化与跨语言召回**：英文素材已在第 0 步忠实译为中文并排版舒适地存入 `raw/`；`wiki/` 中的文件名、标题、摘要、标签与正文全部使用自然中文，同时**必须将英文原标题与核心英文术语写入 `aliases` 字段**以支撑跨语言召回。
+- **中文化、跨语言与口语化别名召回**：英文素材已在第 0 步忠实译为中文并排版舒适地存入 `raw/`；`wiki/` 中的文件名、标题、摘要、标签与正文全部使用自然中文。同时，每篇核心概念/洞察页的 `aliases` 字段**必须同时覆盖两类检索入口**：
+  1. **英文原标题与核心英文术语**（如 `"Specific Knowledge"`、`"Infinite Game"`），支撑跨语言召回；
+  2. **2–4 个高频口语化/应用场景表达**（例如：讨论“出售时间/线性收入”时补充 `"打工"`、`"上班"`；讨论“媒体杠杆/零边际成本内容”时补充 `"自媒体"`、`"内容创业"`；讨论“专长”时补充 `"个人壁垒"`、`"核心竞争力"`），彻底弥合口语提问与书面概念之间的词法鸿沟。
 - **增量融合与观点碰撞**：若库内已有同名或同义概念，优先增量融合到现有页面，并在 `## 写作切入点与观点边界` 中使用 `> [!warning] 观点碰撞` 显式标注新旧观点的张力并给出相对路径链接。
-- **五大原子页标准 Frontmatter**：
+- **五大原子页标准 Frontmatter**（下方 V3.0 扩展字段均为**可选增量字段**，向后 100% 兼容，按需填写即可）：
   ```yaml
   ---
   type: concept                         # source | concept | case | evidence | insight
@@ -60,6 +62,18 @@ kb compile-begin --limit 10 --json
   aliases: ["English Term", "同义词"]
   domain: "personal-growth"
   visibility: private                   # private | team | public
+  # --- V3.0 可选扩展字段（按需填写，不强制每次全填） ---
+  reading_status: read                  # read | partial | unread
+  experience_type: others               # firsthand（亲历一手）| observation（观察）| others（他人/书籍）
+  origin: mixed                         # human | mixed | model_candidate
+  layers: [L2, L3]                      # 可选 L1–L6 认知层级标记
+  mechanisms: ["正反馈循环", "零边际成本"]  # 底层机制关键词（会自动进入全文检索索引）
+  relations:                            # 轻量类型化跨页关系（与正文链接互补）
+    - target: "../concepts/关联概念.md"
+      type: "extends"                   # supports | contradicts | extends | causes | analogizes | related
+      status: "confirmed"               # confirmed（已确认）| candidate（AI候选待审）| rejected（已否定）
+      layer: "L2"
+      reason: "一句话说明关系原因"
   generated:
     by: "agent:kb-ingest"
     at: "YYYY-MM-DD"
@@ -69,12 +83,13 @@ kb compile-begin --limit 10 --json
       ref: "../../raw/YYYY-MM-DD-文件名.md"
   ---
   ```
+- **轻量化原则（禁止过度工程）**：日常入库**不要**强行在每篇原子页里套用 N/N-1/N-2 七栏对照表；该框架仅作为深度专题综合时的**按需思考工具**使用。
 - **绝对红线**：
   1. 仅使用标准相对路径 Markdown 链接（如 `[概念名](../concepts/概念名.md)`），禁止 `[[wikilinks]]`。
   2. 严禁修改任何页面中 `<!-- human:start -->` 至 `<!-- human:end -->` 之间的任何字符。
   3. 对 `verified` 非空的页面，**只允许保持不变或在文末纯追加**，禁止改动原有正文。
   4. 严禁手动编辑 `wiki/index.md`、`wiki/log.md` 或 `raw/`。
-  5. 严禁删除已有 `wiki/` 页面；需要改名时使用 `kb refactor rename`。
+  5. 严禁删除已有 `wiki/` 页面；需要改名时使用 `kb refactor rename`，需要合并重复概念时使用 `kb refactor merge <source> <target>`，日常健康盘点使用 `kb audit`。
 
 ### 5. 全量安全校验与精确提交
 ```bash

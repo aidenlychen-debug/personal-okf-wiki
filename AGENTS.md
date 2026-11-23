@@ -42,3 +42,4 @@
 - **入库编译**：阅读并执行 `skills/kb-ingest/SKILL.md`
 - **精准召回 / 写作弹药包**：阅读并执行 `skills/kb-query/SKILL.md`
 - **知识库巡检与治理**：阅读并执行 `skills/kb-lint/SKILL.md`
+- **自适应架构自迭代与能力上限评估**：阅读并执行 `skills/kb-evolve/SKILL.md`

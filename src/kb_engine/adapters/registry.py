@@ -6,6 +6,7 @@ from pathlib import Path
 
 from kb_engine.adapters.base import BaseAdapter
 from kb_engine.adapters.image_adapter import ImageAdapter
+from kb_engine.adapters.pdf_adapter import PdfAdapter
 from kb_engine.adapters.text_adapter import TextAdapter
 
 
@@ -36,6 +37,7 @@ def build_default_registry(enabled: list[str] | None = None) -> AdapterRegistry:
     available: dict[str, BaseAdapter] = {
         "text": TextAdapter(),
         "image": ImageAdapter(),
+        "pdf": PdfAdapter(),
     }
     selected = enabled if enabled is not None else list(available.keys())
     registry = AdapterRegistry()

@@ -210,3 +210,87 @@ def test_human_readable_cli_output(tmp_path: Path) -> None:
     )
     assert proc_q.returncode == 0
     assert "知识复利效应" in proc_q.stdout
+
+
+def test_and_priority_blocks_weak_subtoken_noise_and_slices_sections(tmp_path: Path) -> None:
+    from kb_engine.retriever import query_wiki
+
+    cmd_init(tmp_path)
+    config = load_config(tmp_path)
+
+    # 3 pages genuinely about "无限游戏"
+    for idx in range(1, 4):
+        (tmp_path / "wiki" / "concepts" / f"无限游戏概念{idx}.md").write_text(
+            "---\n"
+            "type: concept\n"
+            f'title: "无限游戏概念{idx}"\n'
+            f'summary: "讨论无限游戏的长期边界与持续规则 {idx}。"\n'
+            "status: stable\n"
+            "tags: [无限游戏]\n"
+            "---\n\n"
+            f"# 无限游戏概念{idx}\n\n"
+            "## 核心要义\n"
+            "无限游戏的目标不是赢下某次比赛，而是让游戏持续进行下去。\n\n"
+            "## 关联知识\n"
+            "- 延伸阅读：无限游戏概念参考\n",
+            encoding="utf-8",
+        )
+
+    # 1 unrelated physics page mentioning only "无限" ("无限可分")
+    (tmp_path / "wiki" / "concepts" / "时间量子化.md").write_text(
+        "---\n"
+        "type: concept\n"
+        'title: "时间量子化"\n'
+        'summary: "普朗克尺度下时间不是无限可分的。"\n'
+        "status: stable\n"
+        "tags: [物理学]\n"
+        "---\n\n"
+        "# 时间量子化\n\n"
+        "## 物理推导\n"
+        "空间与时间在普朗克尺度下并非无限可分，存在最小离散单元。\n",
+        encoding="utf-8",
+    )
+
+    reindex_wiki(tmp_path, config, regenerate_index=True)
+
+    res = query_wiki(tmp_path, config, "无限游戏")
+    paths = [x["rel_path"] for x in res["l1_inventory"]]
+    assert res["stats"]["fallback_used"] is False
+    assert res["stats"]["direct_hits"] == 3
+    assert "concepts/时间量子化.md" not in paths
+    assert all(x["match_tier"] == "exact+strict" for x in res["l1_inventory"])
+
+    # Verify passage-level matched_sections prioritizes substantive section over 关联知识
+    top_sections = res["l2_full_docs"][0]["matched_sections"]
+    assert len(top_sections) >= 1
+    assert top_sections[0]["heading"] == "核心要义"
+
+
+def test_or_fallback_triggers_on_sparse_multi_term_query(tmp_path: Path) -> None:
+    from kb_engine.retriever import query_wiki
+
+    cmd_init(tmp_path)
+    config = load_config(tmp_path)
+
+    (tmp_path / "wiki" / "concepts" / "无许可杠杆.md").write_text(
+        "---\n"
+        "type: concept\n"
+        'title: "无许可杠杆"\n'
+        'summary: "代码与媒体是零边际成本的杠杆。"\n'
+        "status: stable\n"
+        "tags: [杠杆]\n"
+        "---\n\n"
+        "# 无许可杠杆\n\n"
+        "## 核心机制\n"
+        "媒体杠杆让创作者一次生产无限复制。\n",
+        encoding="utf-8",
+    )
+    reindex_wiki(tmp_path, config, regenerate_index=True)
+
+    # Query has 2 terms; no single page has both "杠杆" and "太空殖民", so OR fallback rescues "无许可杠杆"
+    res = query_wiki(tmp_path, config, "杠杆 太空殖民")
+    assert res["stats"]["fallback_used"] is True
+    assert res["stats"]["direct_hits"] == 1
+    assert res["l1_inventory"][0]["rel_path"] == "concepts/无许可杠杆.md"
+    assert res["l1_inventory"][0]["match_tier"] == "fallback_or"
+

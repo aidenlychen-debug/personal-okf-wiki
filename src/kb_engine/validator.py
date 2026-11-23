@@ -25,6 +25,11 @@ from kb_engine.utils import (
 VALID_TYPES = {"source", "concept", "case", "evidence", "insight"}
 VALID_STATUSES = {"draft", "stable", "deprecated"}
 VALID_VISIBILITIES = {"private", "team", "public"}
+VALID_READING_STATUSES = {"read", "partial", "unread"}
+VALID_EXPERIENCE_TYPES = {"firsthand", "observation", "others"}
+VALID_ORIGINS = {"human", "mixed", "model_candidate"}
+VALID_LAYERS = {"L1", "L2", "L3", "L4", "L5", "L6"}
+VALID_RELATION_STATUSES = {"confirmed", "candidate", "rejected"}
 
 
 def _is_verified_non_empty(meta: dict[str, Any] | None) -> bool:
@@ -181,6 +186,51 @@ def lint_wiki(
                 }
             )
 
+        # Optional V3.0 metadata validation (strictly additive, backward-compatible)
+        reading_status = meta.get("reading_status")
+        if reading_status is not None and str(reading_status).strip() and str(reading_status).strip().lower() not in VALID_READING_STATUSES:
+            errors.append(
+                {
+                    "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                    "path": rel_root,
+                    "message": f"无效的 reading_status 字段: '{reading_status}'（允许值: {sorted(VALID_READING_STATUSES)}）",
+                }
+            )
+
+        experience_type = meta.get("experience_type")
+        if experience_type is not None and str(experience_type).strip() and str(experience_type).strip().lower() not in VALID_EXPERIENCE_TYPES:
+            errors.append(
+                {
+                    "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                    "path": rel_root,
+                    "message": f"无效的 experience_type 字段: '{experience_type}'（允许值: {sorted(VALID_EXPERIENCE_TYPES)}）",
+                }
+            )
+
+        origin = meta.get("origin")
+        if origin is not None and str(origin).strip() and str(origin).strip().lower() not in VALID_ORIGINS:
+            errors.append(
+                {
+                    "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                    "path": rel_root,
+                    "message": f"无效的 origin 字段: '{origin}'（允许值: {sorted(VALID_ORIGINS)}）",
+                }
+            )
+
+        layers = meta.get("layers")
+        if layers is not None:
+            layer_list = layers if isinstance(layers, list) else [layers]
+            for lv in layer_list:
+                lv_norm = str(lv).strip().upper()
+                if lv_norm and lv_norm not in VALID_LAYERS:
+                    errors.append(
+                        {
+                            "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                            "path": rel_root,
+                            "message": f"无效的 layers 层级值: '{lv}'（允许值: L1-L6）",
+                        }
+                    )
+
         # Stale warning
         stale_val = meta.get("stale_after")
         if stale_val:
@@ -233,6 +283,21 @@ def lint_wiki(
             elif resolved.kind == "wiki" and resolved.target_rel_path:
                 inbound_counts[resolved.target_rel_path] = inbound_counts.get(resolved.target_rel_path, 0) + 1
 
+        # Also validate YAML superseded_by relative link if present
+        superseded_by = meta.get("superseded_by")
+        if superseded_by and isinstance(superseded_by, str):
+            resolved_sup = classify_and_resolve_link(file_path, superseded_by, False, root_dir)
+            if resolved_sup.kind not in ("external", "anchor"):
+                if not resolved_sup.target_abs_path or not resolved_sup.target_abs_path.exists():
+                    errors.append(
+                        {
+                            "code": ErrorCode.BROKEN_LINK.value,
+                            "path": rel_root,
+                            "link": superseded_by,
+                            "message": f"Frontmatter superseded_by 目标不存在: {superseded_by}",
+                        }
+                    )
+
         # Also validate YAML sources[].ref
         sources = meta.get("sources")
         if isinstance(sources, list):
@@ -250,6 +315,46 @@ def lint_wiki(
                                     "message": f"Frontmatter sources.ref 目标不存在: {ref}",
                                 }
                             )
+
+        # Validate optional YAML relations[] typed links
+        relations = meta.get("relations")
+        if isinstance(relations, list):
+            for rel_item in relations:
+                if not isinstance(rel_item, dict):
+                    continue
+                rel_status = str(rel_item.get("status") or "confirmed").strip().lower()
+                if rel_status and rel_status not in VALID_RELATION_STATUSES:
+                    errors.append(
+                        {
+                            "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                            "path": rel_root,
+                            "message": f"无效的 relations.status: '{rel_status}'（允许值: {sorted(VALID_RELATION_STATUSES)}）",
+                        }
+                    )
+                rel_layer = str(rel_item.get("layer") or "").strip().upper()
+                if rel_layer and rel_layer not in VALID_LAYERS:
+                    errors.append(
+                        {
+                            "code": ErrorCode.OKF_SCHEMA_ERROR.value,
+                            "path": rel_root,
+                            "message": f"无效的 relations.layer: '{rel_layer}'（允许值: L1-L6）",
+                        }
+                    )
+                target = rel_item.get("target")
+                if target and isinstance(target, str):
+                    resolved = classify_and_resolve_link(file_path, target, False, root_dir)
+                    if resolved.kind not in ("external", "anchor"):
+                        if not resolved.target_abs_path or not resolved.target_abs_path.exists():
+                            errors.append(
+                                {
+                                    "code": ErrorCode.BROKEN_LINK.value,
+                                    "path": rel_root,
+                                    "link": target,
+                                    "message": f"Frontmatter relations.target 目标不存在: {target}",
+                                }
+                            )
+                        elif resolved.kind == "wiki" and resolved.target_rel_path and rel_status != "rejected":
+                            inbound_counts[resolved.target_rel_path] = inbound_counts.get(resolved.target_rel_path, 0) + 1
 
     # 5. Orphan warnings (non-source pages with 0 inbound links)
     for rel_wiki, count in sorted(inbound_counts.items()):

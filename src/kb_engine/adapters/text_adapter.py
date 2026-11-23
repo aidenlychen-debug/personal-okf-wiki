@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from kb_engine.adapters.base import BaseAdapter, RawDocumentPayload
+from kb_engine.adapters.cleaner import light_clean_text
 from kb_engine.errors import ErrorCode, KBError
 from kb_engine.utils import (
     normalize_newlines,
@@ -50,7 +51,7 @@ class TextAdapter(BaseAdapter):
         except UnicodeDecodeError:
             text = raw_bytes.decode("utf-8", errors="replace")
 
-        normalized = normalize_newlines(normalize_nfc(text))
+        normalized = light_clean_text(text, merge_hard_wraps=True)
         content_hash = sha256_text(normalized)
         stem_title = sanitize_filename(file_path.stem, fallback="")
         suggested_title = stem_title or _infer_title_from_text(normalized, "未命名笔记")

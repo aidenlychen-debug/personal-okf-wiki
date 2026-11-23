@@ -24,12 +24,42 @@ retrieval:
   default_l1_limit: 50                # L1 单次返回上限（配合 truncated 标志按需翻页）
   default_l2_top_k: 10                # L2 默认展开完整正文的页面数上限
   max_expanded_evidences: 15          # evidence 强制展开上限，防大库撑爆上下文
+  min_strict_hits: 3                  # AND 严格召回命中数达到该阈值时不触发 OR 兜底
+  or_fallback_min_score_ratio: 0.15   # OR 兜底命中低于最高分该比例时作为长尾噪声剪枝
+  graph_seed_top_k: 5                 # 仅对 Top-K 高置信直接命中展开 1 跳图谱邻居
+  max_matched_sections: 3             # L2 页面中最多提取的高相关段落切片数
+  rrf_k: 60                           # 混合检索 RRF 倒数排名融合平滑常数
+  section_boost_weight: 0.6           # 段落级精准命中的加权系数
+  verified_boost_multiplier: 1.25     # 学员模式下对人类已核验(verified)页面的加权倍率
+  firsthand_boost_multiplier: 1.15    # 创作模式下对一手经验(firsthand)非证据页的温和加权
   fts_weights:
     title: 10.0
     aliases: 8.0
     tags: 6.0
+    mechanisms: 7.0
     summary: 4.0
     body: 1.0
+  # 可插拔云端向量检索（默认关闭，走零依赖纯本地 95 分模式；填入环境变量 Key 并改 enabled: true 即原地升级 98+ 混合检索）
+  embedding:
+    enabled: false
+    provider: "openai_compatible"     # openai_compatible（兼容 Qwen3/百炼/硅基流动/Voyage/OpenAI）| gemini
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "text-embedding-v4"        # 例: text-embedding-v4 | BAAI/bge-m3 | voyage-4-large | gemini-embedding-001
+    api_key_env: "KB_EMBEDDING_API_KEY"
+    dimensions: null
+    query_instruction: ""
+    timeout_seconds: 15
+    batch_size: 16
+  # 可插拔云端 Rerank 精排（默认关闭；与 Embedding 组合将 Top-3 精度推至 98+）
+  reranker:
+    enabled: false
+    provider: "standard_rerank"       # 兼容 Cohere Rerank 4 / Voyage Rerank / 硅基流动 Qwen3-Reranker / Jina
+    base_url: "https://api.siliconflow.cn/v1/rerank"
+    model: "Qwen/Qwen3-Reranker-8B"   # 例: Qwen/Qwen3-Reranker-8B | rerank-2.5 | rerank-v3.5
+    api_key_env: "KB_RERANK_API_KEY"
+    top_n: 15
+    min_score_student: 0.35
+    timeout_seconds: 15
 
 safety:
   auto_git_commit: true               # 编译前后自动提交 Git 快照
@@ -40,4 +70,11 @@ safety:
   block_unexpected_deletions: true    # 拦截 AI 意外删除已有 wiki 页面
 
 adapters:
-  enabled: ["text", "image"]          # 后续扩展仅需追加 "pdf" / "url" / "audio"
+  enabled: ["text", "image", "pdf"]   # 内置文本/图片/PDF适配器，后续可追加 "url" / "audio"
+
+evolution:
+  enabled: true                       # 开启自适应架构自迭代提醒（有理有据才迭代，触顶自动休眠）
+  initial_interval: 5                 # 初始每编译 5 份原始资料触发一次自检建议
+  backoff_intervals: [5, 10, 20, 40]  # 无显著收益或达能力上限时自动拉长自检间隔，量变后再唤醒
+  pain_zero_hit_ratio: 0.30           # 真实查询零命中率超过该阈值时提前唤醒自检
+  min_pain_queries: 5                 # 触发痛点唤醒所需的最少真实查询样本数

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 import yaml
 from pydantic import BaseModel, Field, ValidationError
@@ -41,15 +41,49 @@ class FTSWeightsConfig(BaseModel):
     title: float = 10.0
     aliases: float = 8.0
     tags: float = 6.0
+    mechanisms: float = 7.0
     summary: float = 4.0
     body: float = 1.0
+
+
+class EmbeddingConfig(BaseModel):
+    enabled: bool = False
+    provider: Literal["openai_compatible", "gemini"] = "openai_compatible"
+    base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: str = "text-embedding-v4"
+    api_key_env: str = "KB_EMBEDDING_API_KEY"
+    dimensions: Optional[int] = None
+    query_instruction: str = ""
+    timeout_seconds: float = Field(default=15.0, gt=0.0)
+    batch_size: int = Field(default=16, ge=1)
+
+
+class RerankerConfig(BaseModel):
+    enabled: bool = False
+    provider: Literal["standard_rerank"] = "standard_rerank"
+    base_url: str = "https://api.siliconflow.cn/v1/rerank"
+    model: str = "Qwen/Qwen3-Reranker-8B"
+    api_key_env: str = "KB_RERANK_API_KEY"
+    top_n: int = Field(default=15, ge=1)
+    min_score_student: float = Field(default=0.35, ge=0.0, le=1.0)
+    timeout_seconds: float = Field(default=15.0, gt=0.0)
 
 
 class RetrievalConfig(BaseModel):
     default_l1_limit: int = Field(default=50, ge=1)
     default_l2_top_k: int = Field(default=10, ge=1)
     max_expanded_evidences: int = Field(default=15, ge=1)
+    min_strict_hits: int = Field(default=3, ge=1)
+    or_fallback_min_score_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
+    graph_seed_top_k: int = Field(default=5, ge=1)
+    max_matched_sections: int = Field(default=3, ge=1)
+    rrf_k: int = Field(default=60, ge=1)
+    section_boost_weight: float = Field(default=0.6, ge=0.0)
+    verified_boost_multiplier: float = Field(default=1.25, ge=1.0)
+    firsthand_boost_multiplier: float = Field(default=1.15, ge=1.0)
     fts_weights: FTSWeightsConfig = Field(default_factory=FTSWeightsConfig)
+    embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
+    reranker: RerankerConfig = Field(default_factory=RerankerConfig)
 
 
 class SafetyConfig(BaseModel):
@@ -62,7 +96,15 @@ class SafetyConfig(BaseModel):
 
 
 class AdaptersConfig(BaseModel):
-    enabled: list[str] = Field(default_factory=lambda: ["text", "image"])
+    enabled: list[str] = Field(default_factory=lambda: ["text", "image", "pdf"])
+
+
+class EvolutionConfig(BaseModel):
+    enabled: bool = True
+    initial_interval: int = Field(default=5, ge=1)
+    backoff_intervals: list[int] = Field(default_factory=lambda: [5, 10, 20, 40])
+    pain_zero_hit_ratio: float = Field(default=0.30, ge=0.0, le=1.0)
+    min_pain_queries: int = Field(default=5, ge=1)
 
 
 class KBConfig(BaseModel):
@@ -73,6 +115,7 @@ class KBConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
+    evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
 
 DEFAULT_CONFIG_YAML = """project:
@@ -101,12 +144,40 @@ retrieval:
   default_l1_limit: 50
   default_l2_top_k: 10
   max_expanded_evidences: 15
+  min_strict_hits: 3
+  or_fallback_min_score_ratio: 0.15
+  graph_seed_top_k: 5
+  max_matched_sections: 3
+  rrf_k: 60
+  section_boost_weight: 0.6
+  verified_boost_multiplier: 1.25
+  firsthand_boost_multiplier: 1.15
   fts_weights:
     title: 10.0
     aliases: 8.0
     tags: 6.0
+    mechanisms: 7.0
     summary: 4.0
     body: 1.0
+  embedding:
+    enabled: false
+    provider: "openai_compatible"
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "text-embedding-v4"
+    api_key_env: "KB_EMBEDDING_API_KEY"
+    dimensions: null
+    query_instruction: ""
+    timeout_seconds: 15
+    batch_size: 16
+  reranker:
+    enabled: false
+    provider: "standard_rerank"
+    base_url: "https://api.siliconflow.cn/v1/rerank"
+    model: "Qwen/Qwen3-Reranker-8B"
+    api_key_env: "KB_RERANK_API_KEY"
+    top_n: 15
+    min_score_student: 0.35
+    timeout_seconds: 15
 
 safety:
   auto_git_commit: true
@@ -117,7 +188,14 @@ safety:
   block_unexpected_deletions: true
 
 adapters:
-  enabled: ["text", "image"]
+  enabled: ["text", "image", "pdf"]
+
+evolution:
+  enabled: true
+  initial_interval: 5
+  backoff_intervals: [5, 10, 20, 40]
+  pain_zero_hit_ratio: 0.30
+  min_pain_queries: 5
 """
 
 

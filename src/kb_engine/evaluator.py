@@ -55,7 +55,7 @@ def run_eval(
         expected = [normalize_rel_path(p) for p in (case.get("expected_paths") or [])]
         include_neighbors = bool(case.get("include_neighbors", True))
 
-        res = query_wiki(root_dir, config, query)
+        res = query_wiki(root_dir, config, query, record_telemetry=False)
         latency_ms = float(res["latency_ms"])
         latencies.append(latency_ms)
 

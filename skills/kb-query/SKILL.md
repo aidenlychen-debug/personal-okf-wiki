@@ -9,20 +9,23 @@ description: Personal OKF-Wiki 面向写作与决策的精准召回规范。任�
 
 ## 标准动作链
 
-### 1. 关键词扩写与总目录扫读
+### 1. 关键词扩写（含口语词 → 抽象概念改写）与总目录扫读
 拿到用户的写作主题或调研问题后：
-1. 先将主查询词扩写为 **3–5 个同义词、关联概念或英文术语**（补足词法检索与跨表达联想）。
-2. 快速扫读 `wiki/index.md`，识别标题或摘要语义相关但字面不同的潜在页面。
+1. 先将主查询词扩写为 **3–5 个同义词、关联概念或英文术语**；若用户提问包含日常口语/场景词（如“打工”、“做自媒体”、“内卷”、“副业”），**必须额外拆解为对应的抽象概念词**（例如：`打工` → `出售时间` / `线性收入` / `地位游戏` / `无杠杆`；`自媒体` → `媒体杠杆` / `零边际成本` / `真实性` / `产品化自己`），补足纯词法检索的语义跨度。
+2. 支持空格分隔多词精准交集查询（如 `kb query "无限游戏 杠杆" --json`），引擎默认优先执行 `AND` 严格匹配，仅在命中不足时才自动降级到 `OR` 兜底并剪枝长尾噪声。
+3. 快速扫读 `wiki/index.md`，识别标题或摘要语义相关但字面不同的潜在页面。
 
-### 2. 执行双轨 + 1 跳图谱检索
-对主词与扩展词分别调用（完全无锁只读，可并发执行）：
-```bash
-kb query "<主查询词>" --json
-kb query "<扩展词1>" --json
-```
+### 2. 选择召回模式并执行双轨/混合 + Top-K 1 跳图谱检索
+根据使用场景切换模式（完全无锁只读，可并发执行）：
+- **个人创作模式（默认）**：`kb query "<查询词>" --mode creator --json`（搜索 `private + public`、`draft + stable`，默认排除 `deprecated` 过时页；如需回溯历史认知可加 `--include-deprecated`）。创作模式下引擎会对 `experience_type: firsthand` 的非证据页做温和加权，优先浮现个人亲历洞察，同时不抬高事实性 `evidence` 的客观权重。
+- **学员问答模式**：`kb query "<查询词>" --mode student --json`（强制仅检索 `visibility: public` 且 `status: stable` 的页面，优先加权 `verified` 核验页；若返回 `confidence_warning == "LOW_CONFIDENCE"`，必须如实说明知识库暂未覆盖该问题，严禁编造）。
+- **V3.0 精准切片过滤**：按需组合 `--layer L1..L6`（按认知层级筛选）、`--experience-type firsthand|observation|others`（按经验来源筛选）、`--reading-status read|partial|unread`（按阅读深度筛选）；`mechanisms` 底层机制词已直接进入全文检索索引，可直接用机制词命中跨领域概念。
+- **已确认关系 vs 候选关系分离**：结果中的 `confirmed_relations`（与 `graph_neighbors` 一致）为已确认的 1 跳关联，可直接作为论证支撑；`candidate_relations` 为 `status: candidate` 的 AI 候选联想，仅作创作灵感提示，不可直接当作既定结论引用（`rejected` 关系已自动排除）。
+- **跨领域“知识涌现”桥接法（如把日常小事“吃饭”与《时间的秩序》相连）**：不要直接拿日常表象词硬搜，而是先将日常现象**向上抽离 1 层底层机制词**（例如：`吃饭` → `吸收低熵 / 热量传递 / 不可逆过程 / 维持秩序`），再扫读 `wiki/index.md` 跨学科概念并并发调用 `kb query` 碰撞出高维切入点。
 - 合并并按 `rel_path` 去重所有 `l1_inventory`、`l2_full_docs`、`evidences_with_sources` 与 `graph_neighbors`。
-- 若返回 `stats.truncated == true` 且需要更多广度结果，使用 `--offset 50 --l1-limit 50` 按需翻页补拉。
-- 若需按类型精确聚焦，可加 `--type concept|case|evidence|insight|source`。
+- 优先信任 `match_tier` 为 `hybrid+strict` / `exact+strict` / `strict` / `exact` 的高置信命中；若 `stats.fallback_used == true`，对 `fallback_or` 页面结合摘要复核。
+- 优先阅读 `l2_full_docs[].matched_sections`（按查询词相关性排序的段落切片）快速提取论据与金句，仅在需要完整上下文时再通读 `body`。
+- 若返回 `stats.truncated == true` 且需要更多广度结果，使用 `--offset 50 --l1-limit 50` 按需翻页补拉；按类型聚焦可加 `--type concept|case|evidence|insight|source`。
 
 ### 3. 输出固定五段式“写作弹药包（Writing Brief Package）”
 严格按以下五段结构交付，每条引用均附可溯源的 `wiki/` 页面路径或 `raw/` 原文路径：

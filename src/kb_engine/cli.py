@@ -20,6 +20,11 @@ from kb_engine.db import (
 )
 from kb_engine.errors import ErrorCode, KBError
 from kb_engine.evaluator import run_eval
+from kb_engine.evolution import (
+    build_evolve_report,
+    get_evolution_status,
+    record_evolve_checkpoint,
+)
 from kb_engine.exporter import export_skill_bundle
 from kb_engine.indexer import (
     append_wiki_log,
@@ -28,7 +33,7 @@ from kb_engine.indexer import (
     reindex_wiki,
     reindex_wiki_in_conn,
 )
-from kb_engine.refactor import rename_wiki_page
+from kb_engine.refactor import merge_wiki_pages, rename_wiki_page
 from kb_engine.retriever import query_wiki
 from kb_engine.utils import (
     atomic_write_text,
@@ -91,6 +96,7 @@ def cmd_init(root_dir: Path) -> dict[str, Any]:
             "skills/kb-ingest",
             "skills/kb-query",
             "skills/kb-lint",
+            "skills/kb-evolve",
             "docs",
         ]
         for sub in subdirs:
@@ -414,6 +420,7 @@ def cmd_compile_commit(
                 (now, session_id),
             )
             index_stats = reindex_wiki_in_conn(root_dir, conn, regenerate_index=True)
+            evolution_status = get_evolution_status(conn, config)
 
     return {
         "ok": True,
@@ -423,6 +430,7 @@ def cmd_compile_commit(
         "failed_count": len(failed_rows),
         "changed_pages": sorted(set(changed_pages)),
         "warnings": lint_res["warnings"],
+        "evolution": evolution_status,
         **index_stats,
     }
 
@@ -542,6 +550,7 @@ def cmd_status(root_dir: Path, config: KBConfig) -> dict[str, Any]:
         broken_links = conn.execute(
             "SELECT COUNT(*) FROM wiki_links WHERE is_broken = 1"
         ).fetchone()[0]
+        evolution_status = get_evolution_status(conn, config)
     finally:
         conn.close()
 
@@ -567,7 +576,155 @@ def cmd_status(root_dir: Path, config: KBConfig) -> dict[str, Any]:
             "running": watcher_running,
             "pid": watcher_pid,
         },
+        "evolution": evolution_status,
         "recent_commits": commits,
+    }
+
+
+def cmd_audit(root_dir: Path, config: KBConfig) -> dict[str, Any]:
+    """Lock-free governance audit: student readiness, deprecated/stale/orphan pages, duplicates & V3 coverage."""
+    from datetime import date
+
+    lint_res = lint_wiki(root_dir, config)
+    today = date.today()
+
+    conn = connect_db(root_dir, ensure_schema=True)
+    try:
+        rows = conn.execute(
+            """
+            SELECT rel_path, type, title, status, visibility, is_verified,
+                   stale_after, superseded_by, aliases_json,
+                   reading_status, experience_type, origin, layers_json
+            FROM wiki_pages
+            ORDER BY rel_path ASC
+            """
+        ).fetchall()
+        broken_links = conn.execute(
+            "SELECT COUNT(*) FROM wiki_links WHERE is_broken = 1"
+        ).fetchone()[0]
+        candidate_relations_count = conn.execute(
+            "SELECT COUNT(*) FROM wiki_links WHERE relation_status = 'candidate' AND is_broken = 0"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    status_counts = {"stable": 0, "draft": 0, "deprecated": 0}
+    deprecated_pages: list[dict[str, Any]] = []
+    stale_pages: list[dict[str, Any]] = []
+    public_verified = 0
+    public_unverified = 0
+    unverified_queue: list[dict[str, Any]] = []
+    name_index: dict[str, list[str]] = {}
+
+    v3_reading: dict[str, int] = {}
+    v3_experience: dict[str, int] = {}
+    v3_origin: dict[str, int] = {}
+    v3_layers: dict[str, int] = {}
+
+    for r in rows:
+        st = r["status"] or "stable"
+        status_counts[st] = status_counts.get(st, 0) + 1
+        if st == "deprecated":
+            deprecated_pages.append(
+                {
+                    "rel_path": r["rel_path"],
+                    "title": r["title"],
+                    "superseded_by": r["superseded_by"],
+                }
+            )
+        else:
+            key_title = r["title"].strip().lower()
+            if key_title:
+                name_index.setdefault(key_title, []).append(r["rel_path"])
+            try:
+                aliases = json.loads(r["aliases_json"] or "[]")
+            except (ValueError, TypeError):
+                aliases = []
+            for al in aliases:
+                k = str(al).strip().lower()
+                if k:
+                    name_index.setdefault(k, []).append(r["rel_path"])
+
+        if r["visibility"] == "public" and st == "stable":
+            if r["is_verified"]:
+                public_verified += 1
+            else:
+                public_unverified += 1
+                unverified_queue.append(
+                    {
+                        "rel_path": r["rel_path"],
+                        "title": r["title"],
+                        "type": r["type"],
+                    }
+                )
+
+        if r["stale_after"]:
+            try:
+                sd = date.fromisoformat(str(r["stale_after"]))
+                if sd < today:
+                    stale_pages.append(
+                        {
+                            "rel_path": r["rel_path"],
+                            "title": r["title"],
+                            "stale_after": sd.isoformat(),
+                        }
+                    )
+            except ValueError:
+                pass
+
+        if r["reading_status"]:
+            v3_reading[r["reading_status"]] = v3_reading.get(r["reading_status"], 0) + 1
+        if r["experience_type"]:
+            v3_experience[r["experience_type"]] = v3_experience.get(r["experience_type"], 0) + 1
+        if r["origin"]:
+            v3_origin[r["origin"]] = v3_origin.get(r["origin"], 0) + 1
+        try:
+            for lv in json.loads(r["layers_json"] or "[]"):
+                v3_layers[lv] = v3_layers.get(lv, 0) + 1
+        except (ValueError, TypeError):
+            pass
+
+    duplicate_candidates = [
+        {"term": term, "pages": sorted(set(paths))}
+        for term, paths in sorted(name_index.items())
+        if len(set(paths)) > 1
+    ]
+    orphan_pages = [
+        w["path"] for w in lint_res["warnings"] if w.get("code") == "ORPHAN_PAGE"
+    ]
+
+    return {
+        "ok": lint_res["ok"],
+        "counts": {
+            "total": len(rows),
+            "stable": status_counts.get("stable", 0),
+            "draft": status_counts.get("draft", 0),
+            "deprecated": status_counts.get("deprecated", 0),
+            "stale": len(stale_pages),
+            "orphans": len(orphan_pages),
+            "broken_links": broken_links,
+            "candidate_relations": candidate_relations_count,
+        },
+        "student_readiness": {
+            "public_stable_total": public_verified + public_unverified,
+            "public_verified": public_verified,
+            "public_unverified": public_unverified,
+            "unverified_queue": unverified_queue,
+        },
+        "deprecated_pages": deprecated_pages,
+        "stale_pages": stale_pages,
+        "orphan_pages": orphan_pages,
+        "duplicate_candidates": duplicate_candidates,
+        "v3_coverage": {
+            "reading_status": v3_reading,
+            "experience_type": v3_experience,
+            "origin": v3_origin,
+            "layers": v3_layers,
+        },
+        "lint_summary": {
+            "error_count": lint_res["error_count"],
+            "warning_count": lint_res["warning_count"],
+        },
     }
 
 
@@ -639,9 +796,52 @@ def _build_parser() -> argparse.ArgumentParser:
     p_rename.add_argument("new_path", help="新相对路径（如 concepts/新名.md）")
     p_rename.add_argument("--title", default=None, help="可选更新页面标题")
 
-    p_query = sub.add_parser("query", parents=[common], help="执行中文双轨 + 1 跳图谱检索")
+    p_merge = ref_sub.add_parser("merge", parents=[common], help="合并重复页面并批量重写全库相对链接")
+    p_merge.add_argument("source_path", help="待合并的源页面相对路径（如 concepts/重复概念.md）")
+    p_merge.add_argument("target_path", help="保留的目标主页面相对路径（如 concepts/主概念.md）")
+    p_merge.add_argument("--delete-source", action="store_true", default=False, help="合并后直接删除源页（默认标记 deprecated + superseded_by）")
+
+    p_query = sub.add_parser("query", parents=[common], help="执行段落+双轨/混合 + 1 跳图谱检索")
     p_query.add_argument("query_text", help="检索关键词或短语")
     p_query.add_argument("--type", dest="page_type", default=None, help="过滤页面类型")
+    p_query.add_argument(
+        "--mode",
+        choices=["creator", "student"],
+        default="creator",
+        help="检索模式: creator（个人创作全库发散）| student（学员问答严选公开稳定页）",
+    )
+    p_query.add_argument(
+        "--visibility",
+        choices=["private", "team", "public"],
+        default=None,
+        help="可选可见性过滤（student 模式强制为 public）",
+    )
+    p_query.add_argument(
+        "--include-deprecated",
+        action="store_true",
+        default=False,
+        help="是否包含已废弃(deprecated)的历史页面",
+    )
+    p_query.add_argument(
+        "--layer",
+        choices=["L1", "L2", "L3", "L4", "L5", "L6"],
+        default=None,
+        help="按认知层级过滤（L1-L6）",
+    )
+    p_query.add_argument(
+        "--experience-type",
+        dest="experience_type",
+        choices=["firsthand", "observation", "others"],
+        default=None,
+        help="按经验来源过滤（firsthand/observation/others）",
+    )
+    p_query.add_argument(
+        "--reading-status",
+        dest="reading_status",
+        choices=["read", "partial", "unread"],
+        default=None,
+        help="按阅读状态过滤（read/partial/unread）",
+    )
     p_query.add_argument("--l1-limit", type=int, default=None, help="L1 返回上限")
     p_query.add_argument("--offset", type=int, default=0, help="L1 翻页偏移量")
     p_query.add_argument("--top-k", type=int, default=None, help="L2 展开正文上限")
@@ -655,6 +855,17 @@ def _build_parser() -> argparse.ArgumentParser:
     p_eval.add_argument("--cases", default="tests/eval_cases.yaml", help="黄金测试集 YAML 路径")
 
     sub.add_parser("status", parents=[common], help="输出知识库健康度面板")
+    sub.add_parser("audit", parents=[common], help="输出知识库治理审计报告（含学员就绪度/废弃/过时/孤儿/重复候选）")
+    sub.add_parser("evolve-report", parents=[common], help="生成客观入库/召回遥测诊断报告，供架构自迭代决策")
+    p_evo_mark = sub.add_parser("evolve-mark", parents=[common], help="登记本次自迭代结论并自动调整下一次退避间隔")
+    p_evo_mark.add_argument(
+        "--outcome",
+        required=True,
+        choices=["evolved", "no_gain", "model_ceiling", "skipped"],
+        help="自迭代结论: evolved | no_gain | model_ceiling | skipped",
+    )
+    p_evo_mark.add_argument("--summary", required=True, help="本次自检/迭代结论简述")
+    p_evo_mark.add_argument("--next-interval", type=int, default=None, help="可选手动覆盖下一次触发间隔篇数")
 
     p_export = sub.add_parser("export", parents=[common], help="Phase 3 商业化 Skill 导出（预留）")
     p_export.add_argument("--output", default="dist/skill-bundle", help="导出目录")
@@ -750,10 +961,26 @@ def _format_human_output(command: str, data: dict[str, Any]) -> str:
         )
 
     if command == "refactor":
+        if "source_path" in data:
+            return (
+                f"合并完成: {data['source_path']} -> {data['target_path']} "
+                f"(源页处理={data['source_action']}, 入链重写={data['rewritten_links_count']})\n"
+            )
         return (
             f"重命名完成: {data['old_path']} -> {data['new_path']} | "
             f"入链重写={data['rewritten_links_count']} | 出链重写={data.get('outgoing_links_rewritten_count', 0)}\n"
         )
+
+    if command == "audit":
+        c = data["counts"]
+        sr = data["student_readiness"]
+        lines = [
+            f"治理审计: 总计 {c['total']} 篇 (stable:{c['stable']} / draft:{c['draft']} / deprecated:{c['deprecated']})",
+            f"健康指标: 断链={c['broken_links']} | 孤儿={c['orphans']} | 过期={c['stale']} | 候选关系={c['candidate_relations']}",
+            f"学员就绪度: 公开稳定页={sr['public_stable_total']} (已核验:{sr['public_verified']} / 待核验:{sr['public_unverified']})",
+            f"重复候选词条: {len(data['duplicate_candidates'])} 组",
+        ]
+        return "\n".join(lines) + "\n"
 
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
@@ -839,12 +1066,26 @@ def main(argv: list[str] | None = None) -> int:
                 args.new_path,
                 new_title=args.title,
             )
+        elif args.command == "refactor" and args.refactor_action == "merge":
+            result = merge_wiki_pages(
+                root_dir,
+                config,
+                args.source_path,
+                args.target_path,
+                delete_source=args.delete_source,
+            )
         elif args.command == "query":
             result = query_wiki(
                 root_dir,
                 config,
                 args.query_text,
                 page_type=args.page_type,
+                mode=args.mode,
+                visibility=args.visibility,
+                include_deprecated=args.include_deprecated,
+                layer=args.layer,
+                experience_type=args.experience_type,
+                reading_status=args.reading_status,
                 l1_limit=args.l1_limit,
                 offset=args.offset,
                 top_k=args.top_k,
@@ -866,6 +1107,18 @@ def main(argv: list[str] | None = None) -> int:
             result = run_eval(root_dir, config, cases_p)
         elif args.command == "status":
             result = cmd_status(root_dir, config)
+        elif args.command == "audit":
+            result = cmd_audit(root_dir, config)
+        elif args.command == "evolve-report":
+            result = build_evolve_report(root_dir, config)
+        elif args.command == "evolve-mark":
+            result = record_evolve_checkpoint(
+                root_dir,
+                config,
+                outcome=args.outcome,
+                summary=args.summary,
+                next_interval=args.next_interval,
+            )
         elif args.command == "export":
             result = export_skill_bundle(
                 root_dir,
