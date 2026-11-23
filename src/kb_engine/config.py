@@ -96,7 +96,18 @@ class SafetyConfig(BaseModel):
 
 
 class AdaptersConfig(BaseModel):
-    enabled: list[str] = Field(default_factory=lambda: ["text", "image", "pdf"])
+    enabled: list[str] = Field(
+        default_factory=lambda: ["text", "image", "pdf", "html", "office", "url", "media"]
+    )
+
+
+class TranscriptionConfig(BaseModel):
+    enabled: bool = False
+    base_url: str = "https://api.siliconflow.cn/v1/audio/transcriptions"
+    model: str = "FunAudioLLM/SenseVoiceSmall"
+    api_key_env: str = "KB_TRANSCRIPTION_API_KEY"
+    language: str = "zh"
+    timeout_seconds: float = Field(default=180.0, gt=0.0)
 
 
 class EvolutionConfig(BaseModel):
@@ -115,6 +126,7 @@ class KBConfig(BaseModel):
     retrieval: RetrievalConfig = Field(default_factory=RetrievalConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
+    transcription: TranscriptionConfig = Field(default_factory=TranscriptionConfig)
     evolution: EvolutionConfig = Field(default_factory=EvolutionConfig)
 
 
@@ -188,7 +200,15 @@ safety:
   block_unexpected_deletions: true
 
 adapters:
-  enabled: ["text", "image", "pdf"]
+  enabled: ["text", "image", "pdf", "html", "office", "url", "media"]
+
+transcription:
+  enabled: false
+  base_url: "https://api.siliconflow.cn/v1/audio/transcriptions"
+  model: "FunAudioLLM/SenseVoiceSmall"
+  api_key_env: "KB_TRANSCRIPTION_API_KEY"
+  language: "zh"
+  timeout_seconds: 180
 
 evolution:
   enabled: true

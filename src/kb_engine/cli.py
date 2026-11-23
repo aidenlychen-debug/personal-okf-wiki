@@ -51,8 +51,9 @@ from kb_engine.utils import (
     utc_now_iso,
     write_lock,
 )
+from kb_engine.adapters import build_default_registry
 from kb_engine.validator import lint_wiki
-from kb_engine.watcher import add_direct_text, is_watcher_running, run_watcher, scan_once
+from kb_engine.watcher import add_direct_text, add_url, is_watcher_running, run_watcher, scan_once
 
 _DEFAULT_GITIGNORE = """.kb/
 .venv/
@@ -760,8 +761,10 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("init", parents=[common], help="幂等初始化目录树、Git、配置与数据库")
     sub.add_parser("scan", parents=[common], help="扫描 inbox/ 与只读 watch_folders 并防重归档至 raw/")
 
-    p_add = sub.add_parser("add", parents=[common], help="写入随手灵感并入队 PENDING_COMPILE")
-    p_add.add_argument("--text", required=True, help="文本内容")
+    p_add = sub.add_parser("add", parents=[common], help="写入随手灵感或抓取网页链接并入队 PENDING_COMPILE")
+    add_group = p_add.add_mutually_exclusive_group(required=True)
+    add_group.add_argument("--text", default=None, help="文本内容")
+    add_group.add_argument("--url", default=None, help="网页链接（自动抓取正文转 Markdown）")
     p_add.add_argument("--title", default=None, help="可选标题")
 
     sub.add_parser("watch", parents=[common], help="启动单实例轻量化守护脚本")
@@ -857,6 +860,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", parents=[common], help="输出知识库健康度面板")
     sub.add_parser("audit", parents=[common], help="输出知识库治理审计报告（含学员就绪度/废弃/过时/孤儿/重复候选）")
+    sub.add_parser("adapters", parents=[common], help="检查全部已启用输入适配器、支持后缀及本机解码器就绪状态")
     sub.add_parser("evolve-report", parents=[common], help="生成客观入库/召回遥测诊断报告，供架构自迭代决策")
     p_evo_mark = sub.add_parser("evolve-mark", parents=[common], help="登记本次自迭代结论并自动调整下一次退避间隔")
     p_evo_mark.add_argument(
@@ -1022,7 +1026,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "scan":
             result = scan_once(root_dir, config, apply_debounce=False)
         elif args.command == "add":
-            result = add_direct_text(root_dir, config, text=args.text, title=args.title)
+            if args.url:
+                result = add_url(root_dir, config, url=args.url, title=args.title)
+            else:
+                result = add_direct_text(root_dir, config, text=args.text, title=args.title)
         elif args.command == "watch":
             run_watcher(root_dir, config)
             return 0
@@ -1110,6 +1117,26 @@ def main(argv: list[str] | None = None) -> int:
             result = cmd_status(root_dir, config)
         elif args.command == "audit":
             result = cmd_audit(root_dir, config)
+        elif args.command == "adapters":
+            import os
+            import shutil
+            reg = build_default_registry(
+                config.adapters.enabled,
+                transcription_config=config.transcription,
+            )
+            result = {
+                "ok": True,
+                "enabled_adapters": reg.enabled_names,
+                "supported_extensions": reg.supported_extensions,
+                "system_decoders": {
+                    "pdf_swift_pdfkit": bool(shutil.which("swift")),
+                    "pdf_pdftotext_fallback": bool(shutil.which("pdftotext")),
+                    "heic_macos_sips": bool(shutil.which("sips")),
+                    "video_ffmpeg": bool(shutil.which("ffmpeg")),
+                    "cloud_transcription_enabled": config.transcription.enabled,
+                    "cloud_transcription_key_set": bool(os.environ.get(config.transcription.api_key_env, "").strip()),
+                },
+            }
         elif args.command == "evolve-report":
             result = build_evolve_report(root_dir, config)
         elif args.command == "evolve-mark":

@@ -70,7 +70,16 @@ safety:
   block_unexpected_deletions: true    # 拦截 AI 意外删除已有 wiki 页面
 
 adapters:
-  enabled: ["text", "image", "pdf"]   # 内置文本/图片/PDF适配器，后续可追加 "url" / "audio"
+  enabled: ["text", "image", "pdf", "html", "office", "url", "media"]  # 全套输入适配器（文本/字幕、图片/HEIC、PDF、HTML、Word/PPT/EPUB/CSV、网页链接、音视频）
+
+# 可插拔云端音视频转写（默认关闭；填入环境变量 Key 并改 enabled: true 即支持 .mp3/.m4a/.wav/.mp4/.mov 直接扔 inbox/ 解码）
+transcription:
+  enabled: false
+  base_url: "https://api.siliconflow.cn/v1/audio/transcriptions"  # 兼容 OpenAI / 硅基流动 SenseVoice / Groq Whisper
+  model: "FunAudioLLM/SenseVoiceSmall"                          # 例: FunAudioLLM/SenseVoiceSmall | whisper-1 | whisper-large-v3-turbo
+  api_key_env: "KB_TRANSCRIPTION_API_KEY"
+  language: "zh"
+  timeout_seconds: 180
 
 evolution:
   enabled: true                       # 开启自适应架构自迭代提醒（有理有据才迭代，触顶自动休眠）

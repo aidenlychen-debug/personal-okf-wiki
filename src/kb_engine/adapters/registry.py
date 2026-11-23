@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from kb_engine.adapters.base import BaseAdapter
+from kb_engine.adapters.html_adapter import HtmlAdapter
 from kb_engine.adapters.image_adapter import ImageAdapter
+from kb_engine.adapters.media_adapter import MediaAdapter
+from kb_engine.adapters.office_adapter import OfficeAdapter
 from kb_engine.adapters.pdf_adapter import PdfAdapter
 from kb_engine.adapters.text_adapter import TextAdapter
+from kb_engine.adapters.url_adapter import UrlAdapter
 
 
 class AdapterRegistry:
@@ -32,12 +37,24 @@ class AdapterRegistry:
     def enabled_names(self) -> list[str]:
         return sorted(self._adapters_by_name.keys())
 
+    @property
+    def supported_extensions(self) -> list[str]:
+        return sorted(self._adapters_by_ext.keys())
 
-def build_default_registry(enabled: list[str] | None = None) -> AdapterRegistry:
+
+def build_default_registry(
+    enabled: list[str] | None = None,
+    *,
+    transcription_config: Any = None,
+) -> AdapterRegistry:
     available: dict[str, BaseAdapter] = {
         "text": TextAdapter(),
         "image": ImageAdapter(),
         "pdf": PdfAdapter(),
+        "html": HtmlAdapter(),
+        "office": OfficeAdapter(),
+        "url": UrlAdapter(),
+        "media": MediaAdapter(transcription_config),
     }
     selected = enabled if enabled is not None else list(available.keys())
     registry = AdapterRegistry()

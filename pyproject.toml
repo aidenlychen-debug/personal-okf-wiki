@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-okf-wiki"
-version = "3.0.0"
+version = "3.1.0"
 description = "Personal OKF-Wiki: Local-first, self-evolving AI personal knowledge base engine (Karpathy LLM Wiki x Google OKF v0.3)"
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -21,7 +21,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 from watchdog.observers.polling import PollingObserver
 
-from kb_engine.adapters import AdapterRegistry, ImageAdapter, TextAdapter, build_default_registry
+from kb_engine.adapters import AdapterRegistry, ImageAdapter, TextAdapter, UrlAdapter, build_default_registry
 from kb_engine.adapters.image_adapter import render_image_stub
 from kb_engine.config import KBConfig
 from kb_engine.db import db_session, upsert_raw_document
@@ -206,8 +206,13 @@ def _ingest_single_file(
         assets_dir = raw_dir / "assets"
         assets_dir.mkdir(parents=True, exist_ok=True)
         src_img = payload.asset_files[0]
-        asset_target = unique_target_path(assets_dir, stem_with_date, src_img.suffix.lower())
-        atomic_write_bytes(asset_target, src_img.read_bytes())
+        try:
+            asset_target = unique_target_path(assets_dir, stem_with_date, src_img.suffix.lower())
+            atomic_write_bytes(asset_target, src_img.read_bytes())
+        finally:
+            if payload.metadata.get("cleanup_temp_asset"):
+                with contextlib.suppress(OSError):
+                    src_img.unlink()
         asset_rel_path = normalize_rel_path(asset_target.relative_to(root_dir))
         markdown_content = render_image_stub(
             title=payload.suggested_title,
@@ -250,7 +255,10 @@ def scan_once(
     apply_debounce: bool = False,
 ) -> dict[str, Any]:
     """Scan inbox/ and read-only watch_folders under global write lock."""
-    registry = build_default_registry(config.adapters.enabled)
+    registry = build_default_registry(
+        config.adapters.enabled,
+        transcription_config=config.transcription,
+    )
     inbox_dir = root_dir / config.inbox.path
     inbox_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +390,59 @@ def add_direct_text(
                 raw_rel_path=raw_rel_path,
                 asset_rel_path=None,
                 media_type="text",
+                needs_vision=False,
+                state="PENDING_COMPILE",
+            )
+            return {
+                "ok": True,
+                "duplicate": False,
+                "content_hash": record["content_hash"],
+                "raw_rel_path": record["raw_rel_path"],
+                "state": record["state"],
+            }
+
+
+def add_url(
+    root_dir: Path,
+    config: KBConfig,
+    *,
+    url: str,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Fetch a webpage URL, convert to clean Markdown in raw/, and enqueue PENDING_COMPILE."""
+    adapter = UrlAdapter()
+    payload = adapter.extract_url(url, title=title)
+
+    with write_lock(root_dir, config.safety.write_lock_timeout_seconds):
+        with db_session(root_dir) as conn:
+            existing = conn.execute(
+                "SELECT * FROM raw_documents WHERE content_hash = ?",
+                (payload.content_hash,),
+            ).fetchone()
+            if existing:
+                return {
+                    "ok": True,
+                    "duplicate": True,
+                    "content_hash": existing["content_hash"],
+                    "raw_rel_path": existing["raw_rel_path"],
+                    "state": existing["state"],
+                }
+
+            today = local_today_str()
+            raw_dir = root_dir / "raw"
+            raw_target = unique_target_path(raw_dir, f"{today}-{payload.suggested_title}", ".md")
+            atomic_write_text(raw_target, payload.markdown_content)
+            raw_rel_path = normalize_rel_path(raw_target.relative_to(root_dir))
+
+            _, record = upsert_raw_document(
+                conn,
+                content_hash=payload.content_hash,
+                source_origin="url",
+                origin_path=url.strip(),
+                origin_mtime=None,
+                raw_rel_path=raw_rel_path,
+                asset_rel_path=None,
+                media_type="url",
                 needs_vision=False,
                 state="PENDING_COMPILE",
             )

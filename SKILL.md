@@ -33,8 +33,10 @@ python3 -m venv .venv
 
 ### 录入与编译事务
 ```bash
-kb scan --json                                           # 扫描 inbox/ 与 watch_folders 防重归档至 raw/
+kb scan --json                                           # 扫描 inbox/（支持文本/字幕/HTML/PDF/Word/PPT/EPUB/CSV/图片/HEIC/网页书签/音视频）
 kb add --text "<已清洗文本>" --title "<标题>" --json       # 直接录入灵感或短文本
+kb add --url "https://..." --title "<标题>" --json        # 直接抓取网页正文转 Markdown 入库
+kb adapters --json                                       # 检查全套输入适配器与本机解码器（PDFKit/sips/ffmpeg/转写 Key）状态
 kb compile-begin --limit 10 --json                       # 隔离人类改动并锁定待编译批次
 kb compile-fail --session <id> --hash <h> --reason "..." --json  # 毒丸隔离单个损坏文件
 kb compile-commit --session <id> --note "<摘要>" --json   # 全量安全校验、重建索引并精确提交

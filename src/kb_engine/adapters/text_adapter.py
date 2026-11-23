@@ -1,4 +1,4 @@
-"""Text and Markdown input adapter (.md, .txt, and direct text)."""
+"""Text, Markdown & Subtitle input adapter (.md, .txt, .srt, .vtt, and direct text)."""
 
 from __future__ import annotations
 
@@ -16,6 +16,26 @@ from kb_engine.utils import (
 )
 
 _H1_RE = re.compile(r"^\s*#\s+(.+?)\s*$", re.MULTILINE)
+_SUBTITLE_TS_RE = re.compile(r"^\s*(?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}\s*-->\s*(?:\d{1,2}:)?\d{2}:\d{2}[.,]\d{3}.*$")
+_SUBTITLE_TAG_RE = re.compile(r"</?(?:c|i|b|u|v|font)[^>]*>", re.IGNORECASE)
+
+
+def _strip_subtitle_markup(text: str) -> str:
+    """Strip SRT/VTT cue indices, WEBVTT headers, and timestamp range lines."""
+    out: list[str] = []
+    for raw_line in normalize_newlines(text).splitlines():
+        s = raw_line.strip()
+        if not s:
+            out.append("")
+            continue
+        if s.upper().startswith("WEBVTT") or s.startswith("NOTE") or s.isdigit():
+            continue
+        if _SUBTITLE_TS_RE.match(s):
+            continue
+        cleaned_line = _SUBTITLE_TAG_RE.sub("", s).strip()
+        if cleaned_line:
+            out.append(cleaned_line)
+    return "\n".join(out)
 
 
 def _infer_title_from_text(text: str, fallback: str) -> str:
@@ -35,7 +55,7 @@ def _infer_title_from_text(text: str, fallback: str) -> str:
 
 class TextAdapter(BaseAdapter):
     name = "text"
-    supported_extensions = (".md", ".markdown", ".txt")
+    supported_extensions = (".md", ".markdown", ".txt", ".srt", ".vtt")
 
     def extract(self, file_path: Path) -> RawDocumentPayload:
         try:
@@ -47,10 +67,12 @@ class TextAdapter(BaseAdapter):
             ) from exc
 
         try:
-            text = raw_bytes.decode("utf-8")
+            text = raw_bytes.decode("utf-8-sig")
         except UnicodeDecodeError:
             text = raw_bytes.decode("utf-8", errors="replace")
 
+        if file_path.suffix.lower() in (".srt", ".vtt"):
+            text = _strip_subtitle_markup(text)
         normalized = light_clean_text(text, merge_hard_wraps=True)
         content_hash = sha256_text(normalized)
         stem_title = sanitize_filename(file_path.stem, fallback="")

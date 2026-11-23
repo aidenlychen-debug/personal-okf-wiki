@@ -1,8 +1,12 @@
-"""Image input adapter (.png, .jpg, .jpeg, .webp) with self-describing stubs."""
+"""Image input adapter (.png, .jpg, .jpeg, .webp, .heic, .heif) with self-describing stubs."""
 
 from __future__ import annotations
 
+import os
+import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
 
 from kb_engine.adapters.base import BaseAdapter, RawDocumentPayload
@@ -83,14 +87,45 @@ def render_image_stub(
     )
 
 
+def _convert_heic_to_jpeg(file_path: Path) -> Path:
+    sips_bin = shutil.which("sips")
+    if not sips_bin:
+        raise KBError(
+            ErrorCode.ADAPTER_ERROR,
+            f"当前系统缺少 macOS sips 工具，无法转换 HEIC 图片: {file_path.name}",
+        )
+    fd, tmp_name = tempfile.mkstemp(prefix="kb_heic_", suffix=".jpg")
+    os.close(fd)
+    out_jpg = Path(tmp_name)
+    out_jpg.unlink(missing_ok=True)
+    proc = subprocess.run(
+        [sips_bin, "-s", "format", "jpeg", str(file_path), "--out", str(out_jpg)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if proc.returncode != 0 or not out_jpg.exists():
+        out_jpg.unlink(missing_ok=True)
+        raise KBError(ErrorCode.ADAPTER_ERROR, f"HEIC 转 JPEG 失败 ({file_path.name}): {proc.stderr}")
+    return out_jpg
+
+
 class ImageAdapter(BaseAdapter):
     name = "image"
-    supported_extensions = (".png", ".jpg", ".jpeg", ".webp")
+    supported_extensions = (".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif")
 
     def extract(self, file_path: Path) -> RawDocumentPayload:
+        asset_path = file_path
+        cleanup_temp = False
+        if file_path.suffix.lower() in (".heic", ".heif"):
+            asset_path = _convert_heic_to_jpeg(file_path)
+            cleanup_temp = True
+
         try:
-            raw_bytes = file_path.read_bytes()
+            raw_bytes = asset_path.read_bytes()
         except OSError as exc:
+            if cleanup_temp:
+                asset_path.unlink(missing_ok=True)
             raise KBError(
                 ErrorCode.ADAPTER_ERROR,
                 f"无法读取图片文件 {file_path}: {exc}",
@@ -100,7 +135,8 @@ class ImageAdapter(BaseAdapter):
         dimensions = _detect_image_dimensions(raw_bytes)
         suggested_title = sanitize_filename(file_path.stem, fallback="未命名图片")
         captured_at = local_today_str()
-        placeholder_asset_rel = f"raw/assets/{captured_at}-{suggested_title}{file_path.suffix.lower()}"
+        asset_suffix = asset_path.suffix.lower()
+        placeholder_asset_rel = f"raw/assets/{captured_at}-{suggested_title}{asset_suffix}"
         stub_md = render_image_stub(
             title=suggested_title,
             asset_rel_path=placeholder_asset_rel,
@@ -113,12 +149,13 @@ class ImageAdapter(BaseAdapter):
             media_type="image",
             content_hash=binary_hash,
             markdown_content=stub_md,
-            asset_files=[file_path],
+            asset_files=[asset_path],
             needs_vision=True,
             metadata={
                 "dimensions": dimensions,
                 "captured_at": captured_at,
                 "original_filename": normalize_nfc(file_path.name),
-                "asset_suffix": file_path.suffix.lower(),
+                "asset_suffix": asset_suffix,
+                "cleanup_temp_asset": cleanup_temp,
             },
         )

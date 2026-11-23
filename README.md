@@ -14,7 +14,10 @@
   - **可插拔云端 98+ 升级通道**：`config.yaml` 预埋标准云端 Embedding（OpenAI 兼容 / Gemini）与 Rerank 接口，默认关闭，按需填入 API Key 后执行 `kb rebuild` 即可原地开启混合检索。
 - **科学爆款文案拆解（`kb-viral-ingest`）**：先剥离账号/热点等非文本混淆变量，再基于行为经济学、认知心理学、社会心理学与叙事学经典理论做分指标因果归因、反事实检验、负样本最小差异对照，并沉淀去题材填空骨架。
 - **有理有据的自适应自迭代（`kb-evolve`）**：静默记录真实查询遥测，按 `5 → 10 → 20 → 40` 篇自适应退避节奏触发诊断；触及当前架构/模型能力上限时主动刹车休眠（`model_ceiling`），待后续数据量积累或零命中痛点飙升时再唤醒微调，默认只进化未来规则不翻修旧页。
-- **确定性治理工具**：内置 `kb refactor rename`、`kb refactor merge`、`kb audit`、`kb lint`、`kb rebuild`，外加原生 macOS PDFKit 解析与零污染预清洗器。
+- **全格式输入解码套件（v3.1.0）**：
+  - 零依赖原生开箱即用：`.md`/`.txt`/`.srt`/`.vtt` 字幕、`.html`/`.htm`、`.pdf`（macOS PDFKit）、`.docx`/`.pptx`/`.epub`/`.csv`、`.png`/`.jpg`/`.webp`/`.heic`（自动转 JPEG 供视觉模型读取）、`.webloc`/`.url`/`.link` 网页书签与 `kb add --url`。
+  - 可插拔云端音视频转写：支持 `.mp3`/`.m4a`/`.wav`/`.ogg`/`.flac`/`.aac` 与 `.mp4`/`.mov`/`.mkv`/`.webm`（`ffmpeg` 抽音轨 → 云端 Whisper/SenseVoice 转文字，只将干净文稿进 `raw/`，绝不塞爆 Git）。运行 `kb adapters` 一键体检所有解码器就绪状态。
+- **确定性治理工具**：内置 `kb refactor rename`、`kb refactor merge`、`kb audit`、`kb lint`、`kb rebuild`。
 
 ## 快速开始
 
