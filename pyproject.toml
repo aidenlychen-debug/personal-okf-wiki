@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-okf-wiki"
-version = "2.3.0"
-description = "Personal OKF-Wiki: Extractable modular personal knowledge base engine (Karpathy LLM Wiki x Google OKF v0.3)"
-readme = "AGENTS.md"
+version = "3.0.0"
+description = "Personal OKF-Wiki: Local-first, self-evolving AI personal knowledge base engine (Karpathy LLM Wiki x Google OKF v0.3)"
+readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
     "pydantic>=2.0",
