@@ -7,6 +7,7 @@ name = "personal-okf-wiki"
 version = "3.0.0"
 description = "Personal OKF-Wiki: Local-first, self-evolving AI personal knowledge base engine (Karpathy LLM Wiki x Google OKF v0.3)"
 readme = "README.md"
+license = { file = "LICENSE" }
 requires-python = ">=3.9"
 dependencies = [
     "pydantic>=2.0",

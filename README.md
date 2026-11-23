@@ -68,3 +68,9 @@ personal-okf-wiki/
 .venv/bin/kb evolve-report    # 查看入库与召回遥测诊断报告
 .venv/bin/kb rebuild          # 从 raw/ 与 wiki/ 无损重建 .kb/kb.db
 ```
+
+## 许可协议（License）
+
+本项目采用 **个人使用免费、商用需授权** 许可协议，详见 [`LICENSE`](./LICENSE)：
+- **个人与非商业用途**：免费使用、学习与修改（须保留版权与许可声明）。
+- **商业用途**：包括但不限于付费服务/SaaS、学员付费问答、打包进付费课程/社群、企业商业部署等，均须事先联系作者获取书面授权。
