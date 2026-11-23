@@ -94,6 +94,7 @@ def cmd_init(root_dir: Path) -> dict[str, Any]:
             "wiki/evidences",
             "wiki/insights",
             "skills/kb-ingest",
+            "skills/kb-viral-ingest",
             "skills/kb-query",
             "skills/kb-lint",
             "skills/kb-evolve",

@@ -39,7 +39,8 @@
 
 ## 2. 标准 Skills 路由
 
-- **入库编译**：阅读并执行 `skills/kb-ingest/SKILL.md`
+- **通用知识入库编译**：阅读并执行 `skills/kb-ingest/SKILL.md`
+- **爆款文案科学拆解入库**：阅读并执行 `skills/kb-viral-ingest/SKILL.md`
 - **精准召回 / 写作弹药包**：阅读并执行 `skills/kb-query/SKILL.md`
 - **知识库巡检与治理**：阅读并执行 `skills/kb-lint/SKILL.md`
 - **自适应架构自迭代与能力上限评估**：阅读并执行 `skills/kb-evolve/SKILL.md`
