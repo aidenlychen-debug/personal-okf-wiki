@@ -17,6 +17,19 @@ python3 -m venv .venv
 
 所有 CLI 命令均建议附加 `--json` 参数，遵守统一契约 `{"ok": true, ...}` 或 `{"ok": false, "error_code": "...", "message": "...", "details": {}}`。
 
+### 云端双模型 API Key 长期连接与主动提醒（推荐配置）
+- **推荐免费双模型方案**：在硅基流动（`https://www.siliconflow.cn/`）申请 1 个 API Key，即可在 `config.yaml` 中同时开启免费 Embedding（`BAAI/bge-m3`）与免费 Rerank（`BAAI/bge-reranker-v2-m3`，注意不要加 `Pro/` 前缀），将召回精度从纯本地 ~95 分提升至 98+ 混合精排。
+- **长期生效保存方式（推荐写入 `.kb/.env`，已在 `.gitignore` 中绝不会上传 GitHub）**：
+  ```bash
+  cat <<'EOF' > .kb/.env
+  KB_EMBEDDING_API_KEY="你的API_Key"
+  KB_RERANK_API_KEY="你的API_Key"
+  EOF
+  chmod 600 .kb/.env
+  ```
+  引擎每次加载 `config.yaml` 时会自动读取 `.kb/.env`（同时兼容 `~/.zshrc` 系统环境变量，外部已设环境变量优先），新建终端窗口、重启电脑或桌面端 AI 客户端调用均可长期保持连接。
+- **Agent 必做连接检查与提醒**：执行 `kb query --json` 或 `kb rebuild --json` 时，若检测到 `config.yaml` 已开启云端检索但返回了 `degraded_reasons` 非空（如 `missing_env:KB_EMBEDDING_API_KEY`、`missing_env:KB_RERANK_API_KEY`、`embedding_api_error`、`reranker_api_error`）或 `vector_used: false` / `reranker_used: false`，**必须主动提醒用户云端检索当前未连上/已降级为纯本地模式**，并提示检查 `.kb/.env` 或 `~/.zshrc` 中的 API Key 与网络连通性。
+
 ## 2. 五大核心工作流路由（按场景加载子规范）
 
 | 使用场景 | 加载子规范 | 核心命令 |

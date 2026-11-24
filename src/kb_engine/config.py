@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Literal, Optional
 
@@ -219,8 +220,35 @@ evolution:
 """
 
 
+def _load_local_env(root_dir: Path) -> None:
+    """Load local secrets from .kb/.env into os.environ without overriding existing env vars."""
+    env_path = root_dir / ".kb" / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+    except OSError:
+        return
+
+
 def load_config(root_dir: Path) -> KBConfig:
     """Load and validate config.yaml from the knowledge base root directory."""
+    _load_local_env(root_dir)
     config_path = root_dir / "config.yaml"
     if not config_path.exists():
         return KBConfig()

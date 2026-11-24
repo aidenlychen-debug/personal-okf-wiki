@@ -17,6 +17,7 @@
 - **全格式输入解码套件（v3.1.0）**：
   - 零依赖原生开箱即用：`.md`/`.txt`/`.srt`/`.vtt` 字幕、`.html`/`.htm`、`.pdf`（macOS PDFKit）、`.docx`/`.pptx`/`.epub`/`.csv`、`.png`/`.jpg`/`.webp`/`.heic`（自动转 JPEG 供视觉模型读取）、`.webloc`/`.url`/`.link` 网页书签与 `kb add --url`。
   - 可插拔云端音视频转写：支持 `.mp3`/`.m4a`/`.wav`/`.ogg`/`.flac`/`.aac` 与 `.mp4`/`.mov`/`.mkv`/`.webm`（`ffmpeg` 抽音轨 → 云端 Whisper/SenseVoice 转文字，只将干净文稿进 `raw/`，绝不塞爆 Git）。运行 `kb adapters` 一键体检所有解码器就绪状态。
+- **云端双模型长期连接与断连提醒（v3.1.2）**：支持 `.kb/.env`（已入 `.gitignore`）本地自动加载，预填硅基流动免费双模型（`BAAI/bge-m3` + `BAAI/bge-reranker-v2-m3`），并在 `SKILL.md` / `kb-query` 中内置断连降级主动提醒。
 - **入库双门禁（v3.1.1）**：英文原文强制先忠实翻译为流畅中文 Markdown 再入 `raw/`（保留专有名词对照并入库后自检）；入库前自动与既有 `raw/` 及 `wiki/sources/` 跨格式查重，重复内容默认跳过并提前告知用户。
 - **确定性治理工具**：内置 `kb refactor rename`、`kb refactor merge`、`kb audit`、`kb lint`、`kb rebuild`。
 

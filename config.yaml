@@ -43,8 +43,8 @@ retrieval:
   embedding:
     enabled: false
     provider: "openai_compatible"     # openai_compatible（兼容 Qwen3/百炼/硅基流动/Voyage/OpenAI）| gemini
-    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    model: "text-embedding-v4"        # 例: text-embedding-v4 | BAAI/bge-m3 | voyage-4-large | gemini-embedding-001
+    base_url: "https://api.siliconflow.cn/v1"
+    model: "BAAI/bge-m3"              # 例: text-embedding-v4 | BAAI/bge-m3 | voyage-4-large | gemini-embedding-001
     api_key_env: "KB_EMBEDDING_API_KEY"
     dimensions: null
     query_instruction: ""
@@ -55,7 +55,7 @@ retrieval:
     enabled: false
     provider: "standard_rerank"       # 兼容 Cohere Rerank 4 / Voyage Rerank / 硅基流动 Qwen3-Reranker / Jina
     base_url: "https://api.siliconflow.cn/v1/rerank"
-    model: "Qwen/Qwen3-Reranker-8B"   # 例: Qwen/Qwen3-Reranker-8B | rerank-2.5 | rerank-v3.5
+    model: "BAAI/bge-reranker-v2-m3"  # 例: BAAI/bge-reranker-v2-m3 | Qwen/Qwen3-Reranker-8B | rerank-2.5
     api_key_env: "KB_RERANK_API_KEY"
     top_n: 15
     min_score_student: 0.35

@@ -26,6 +26,8 @@ description: Personal OKF-Wiki 面向写作与决策的精准召回规范。任�
 - 优先信任 `match_tier` 为 `hybrid+strict` / `exact+strict` / `strict` / `exact` 的高置信命中；若 `stats.fallback_used == true`，对 `fallback_or` 页面结合摘要复核。
 - 优先阅读 `l2_full_docs[].matched_sections`（按查询词相关性排序的段落切片）快速提取论据与金句，仅在需要完整上下文时再通读 `body`。
 - 若返回 `stats.truncated == true` 且需要更多广度结果，使用 `--offset 50 --l1-limit 50` 按需翻页补拉；按类型聚焦可加 `--type concept|case|evidence|insight|source`。
+- **云端双模型连接状态检查与主动提醒（必做）**：每次读取 `kb query --json` 返回后，必须检查 `stats.vector_used`、`stats.reranker_used` 与 `stats.degraded_reasons`：
+  - 若 `config.yaml` 已开启云端 Embedding / Rerank，但 `stats.degraded_reasons` 非空（如 `missing_env:KB_EMBEDDING_API_KEY`、`missing_env:KB_RERANK_API_KEY`、`embedding_api_error`、`reranker_api_error`）或 `vector_used` / `reranker_used` 为 `false`，**必须在回复开头或结尾显式提醒用户**：“当前云端向量/精排 API 未连接（已自动降级为纯本地检索）”，并提示用户检查 `.kb/.env`（长期本地密钥文件，不入 Git）或 `~/.zshrc` 中是否已配置 `KB_EMBEDDING_API_KEY` 与 `KB_RERANK_API_KEY`（未申请可前往硅基流动 `https://www.siliconflow.cn/` 免费获取），确认连上后需在首次启用时执行一次 `.venv/bin/kb rebuild`。
 
 ### 3. 输出固定五段式“写作弹药包（Writing Brief Package）”
 严格按以下五段结构交付，每条引用均附可溯源的 `wiki/` 页面路径或 `raw/` 原文路径：
