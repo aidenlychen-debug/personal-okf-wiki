@@ -1,81 +1,184 @@
 # Personal OKF-Wiki
 
-> **Local-first, self-evolving AI personal knowledge base** built on **Karpathy LLM Wiki × Google OKF v0.3 × Obsidian**.
+**A Local-First, Self-Evolving AI Personal Knowledge Base Engine**
 
-一套零外部 API 即可跑通 95+ 分检索精度、支持多 AI Agent 无锁并发协作、内置科学爆款拆解与自适应自迭代闭环的个人知识库引擎。
+[![Version](https://img.shields.io/badge/version-3.1.2-002FA7?style=flat-square)](#quick-start)
+[![Python](https://img.shields.io/badge/python-3.9%2B-1D1D1F?style=flat-square)](#quick-start)
+[![Architecture](https://img.shields.io/badge/architecture-Karpathy%20LLM%20Wiki%20%C3%97%20OKF%20v0.3%20%C3%97%20Obsidian-3A3A3C?style=flat-square)](#architecture)
+[![Agent Skill](https://img.shields.io/badge/standard-Agent%20Skill%20%28SKILL.md%29-1D1D1F?style=flat-square)](#agent-skill-integration)
+[![License](https://img.shields.io/badge/license-Personal%20Free%20%7C%20Commercial%20Authorized-002FA7?style=flat-square)](#license)
 
-## 核心特性
+> Turn scattered books, articles, PDFs, notes, images, subtitles, web pages, and audio/video recordings into a **clean, human-readable Obsidian wiki and a 95+ precision AI retrieval engine** — running **100% locally with zero external APIs**, safe for multi-agent concurrent collaboration, and equipped with scientific viral-content deconstruction and evidence-driven self-evolution.
 
-- **人机物理隔离（阅读区零哈希）**：`inbox/`、`raw/`、`wiki/` 全程保持人类可读的纯净中文 Markdown 与相对路径链接（Obsidian 原生双链预览），所有索引、指纹、遥测与写锁全部收口在 `.kb/`。
-- **事务闭环与四把安全锁**：Git + SQLite WAL 跨系统对账，内置 `<!-- human:start -->` 人类禁改字节锁、`verified` 已核验页纯追加锁、防误删锁、防缩水锁与毒丸隔离机制。
-- **双模式精准召回（V3.0 P0+P1）**：
-  - `--mode creator`：面向个人创作，全库发散检索 + 段落级/页面级 AND 优先 FTS5 + `mechanisms` 底层机制词索引 + Top-K 1 跳图谱（分离 `confirmed_relations` 与 `candidate_relations`）+ 一手经验温和加权。
-  - `--mode student`：面向学员问答，严格限定 `visibility: public` + `status: stable`，加权 `verified` 页面，未命中触发 `LOW_CONFIDENCE` 拒答保护。
-  - **可插拔云端 98+ 升级通道**：`config.yaml` 预埋标准云端 Embedding（OpenAI 兼容 / Gemini）与 Rerank 接口，默认关闭，按需填入 API Key 后执行 `kb rebuild` 即可原地开启混合检索。
-- **科学爆款文案拆解（`kb-viral-ingest`）**：先剥离账号/热点等非文本混淆变量，再基于行为经济学、认知心理学、社会心理学与叙事学经典理论做分指标因果归因、反事实检验、负样本最小差异对照，并沉淀去题材填空骨架。
-- **有理有据的自适应自迭代（`kb-evolve`）**：静默记录真实查询遥测，按 `5 → 10 → 20 → 40` 篇自适应退避节奏触发诊断；触及当前架构/模型能力上限时主动刹车休眠（`model_ceiling`），待后续数据量积累或零命中痛点飙升时再唤醒微调，默认只进化未来规则不翻修旧页。
-- **全格式输入解码套件（v3.1.0）**：
-  - 零依赖原生开箱即用：`.md`/`.txt`/`.srt`/`.vtt` 字幕、`.html`/`.htm`、`.pdf`（macOS PDFKit）、`.docx`/`.pptx`/`.epub`/`.csv`、`.png`/`.jpg`/`.webp`/`.heic`（自动转 JPEG 供视觉模型读取）、`.webloc`/`.url`/`.link` 网页书签与 `kb add --url`。
-  - 可插拔云端音视频转写：支持 `.mp3`/`.m4a`/`.wav`/`.ogg`/`.flac`/`.aac` 与 `.mp4`/`.mov`/`.mkv`/`.webm`（`ffmpeg` 抽音轨 → 云端 Whisper/SenseVoice 转文字，只将干净文稿进 `raw/`，绝不塞爆 Git）。运行 `kb adapters` 一键体检所有解码器就绪状态。
-- **云端双模型长期连接与断连提醒（v3.1.2）**：支持 `.kb/.env`（已入 `.gitignore`）本地自动加载，预填硅基流动免费双模型（`BAAI/bge-m3` + `BAAI/bge-reranker-v2-m3`），并在 `SKILL.md` / `kb-query` 中内置断连降级主动提醒。
-- **入库双门禁（v3.1.1）**：英文原文强制先忠实翻译为流畅中文 Markdown 再入 `raw/`（保留专有名词对照并入库后自检）；入库前自动与既有 `raw/` 及 `wiki/sources/` 跨格式查重，重复内容默认跳过并提前告知用户。
-- **确定性治理工具**：内置 `kb refactor rename`、`kb refactor merge`、`kb audit`、`kb lint`、`kb rebuild`。
+---
 
-## 快速开始
+## Why Personal OKF-Wiki?
+
+Most AI note-taking setups and personal RAG scripts break down after the first 50 documents:
+
+1. **Vector-only RAG black boxes** bury your knowledge inside opaque chunks, lose document lineage, hallucinate when confidence is low, and degrade when your vault grows.
+2. **Naive AI-edited Obsidian vaults** pollute human-readable Markdown with hashes and metadata clutter, silently overwrite your handwritten notes, break links on rename, and corrupt state when two agents edit at once.
+3. **Static prompts never improve** — they repeat the same retrieval blind spots and ingest low-signal viral posts without separating real psychological mechanisms from luck or account size.
+
+**Personal OKF-Wiki** combines **Karpathy's LLM Wiki pattern**, **Google OKF v0.3 atomic knowledge schema**, **Obsidian-native Markdown**, and a **deterministic Python transaction engine (`kb`)** into one cohesive system:
+
+| Capability | Plain Obsidian Vault | Typical Local RAG Script | **Personal OKF-Wiki** |
+|---|:---:|:---:|:---:|
+| Pure human-readable Markdown (zero hash pollution) | Yes | — | **Enforced (`.kb/` isolated)** |
+| Zero-API offline high-precision retrieval (95+ score) | Keyword only | Requires embeddings | **Built-in FTS5 + 1-hop Graph** |
+| Optional hybrid cloud upgrade (98+ Embedding + Rerank) | — | Custom wiring | **Pluggable via `.kb/.env`** |
+| Transactional multi-agent collaboration + crash recovery | — | — | **Git + SQLite WAL + 4 Locks** |
+| Creator vs. Student dual-mode retrieval & refusal guard | — | — | **Built-in (`--mode`)** |
+| Scientific viral content attribution & template extraction | — | — | **Built-in (`kb-viral-ingest`)** |
+| Telemetry-driven self-evolution with `model_ceiling` brake | — | — | **Built-in (`kb-evolve`)** |
+
+---
+
+## Architecture
+
+```mermaid
+flowchart LR
+    IN["Any Input<br/>MD / PDF / DOCX / PPTX / EPUB<br/>HTML / SRT / Images / URL / Audio & Video"] --> ING["1. Zero-Pollution Ingestion<br/>Dedup · Translation Gate · Clean raw/"]
+    ING --> TX["2. Transactional Compilation<br/>kb compile-begin → Atomic OKF v0.3 Wiki → kb compile-commit"]
+    TX --> DB["3. Isolated Machine Index (.kb/)<br/>SQLite FTS5 · Mechanisms · 1-Hop Graph · Optional Hybrid Cloud"]
+    DB --> Q1["Creator Mode<br/>Full-Vault Divergent Recall<br/>+ 5-Part Writing Ammo Pack"]
+    DB --> Q2["Student Mode<br/>Public + Stable Only<br/>+ LOW_CONFIDENCE Refusal Guard"]
+    DB --> EV["4. Adaptive Self-Evolution<br/>Silent Query Telemetry → 5/10/20/40 Cadence → Rule Upgrades"]
+```
+
+---
+
+## Core Value & Engineering Pillars
+
+### 1. Physical Human–Machine Isolation (Zero Pollution in Reading Zones)
+- `inbox/`, `raw/`, and `wiki/` stay **100% pure, human-readable Markdown** with standard relative links that preview natively in Obsidian (no `[[wikilink]]` lock-in, no ugly hash strings in prose).
+- All machine state — SQLite FTS5 index, content hashes, query telemetry, write locks, and `.env` secrets — lives strictly inside `.kb/`.
+
+### 2. Transactional Multi-Agent Safety & Four Hard Locks
+- **Git + SQLite WAL Reconciliation**: `kb compile-begin` snapshots human edits cleanly before locking a compile batch; `kb compile-commit` runs full validation, rebuilds indexes, and commits atomically; `kb recover` reconciles interrupted sessions with zero data loss.
+- **Four Built-In Safety Locks**:
+  1. **Human Immutable Zone Lock**: Never modifies a single byte between `<!-- human:start -->` and `<!-- human:end -->`.
+  2. **Verified Page Append-Only Lock**: Pages marked `verified` only permit non-destructive appends at the bottom.
+  3. **Anti-Deletion & Anti-Shrinkage Locks**: Blocks accidental content truncation or page loss during AI compilation.
+  4. **Poison-Pill Isolation (`kb compile-fail`)**: Quarantines a single corrupted source without blocking the rest of the batch.
+
+### 3. Dual-Mode Precision Retrieval (95+ Offline, 98+ Plug-in Hybrid Cloud)
+- **Creator Mode (`--mode creator`)**: Designed for writing, research, and synthesis. Runs full-vault divergent search with paragraph/page AND-priority FTS5, `mechanisms` underlying-principle indexing, Top-K 1-hop graph expansion (strictly separating `confirmed_relations` from `candidate_relations`), and gentle firsthand-experience weighting.
+- **Student Mode (`--mode student`)**: Designed for trustworthy Q&A. Strictly restricts retrieval to `visibility: public` + `status: stable`, prioritizes `verified` pages, and triggers an explicit `LOW_CONFIDENCE` refusal guard instead of hallucinating.
+- **Pluggable Cloud Hybrid Upgrade (`v3.1.2`)**: Works 100% offline by default. To boost precision from ~95 to 98+, drop an API key (OpenAI-compatible, Gemini, or SiliconFlow free tier `BAAI/bge-m3` + `BAAI/bge-reranker-v2-m3`) into `.kb/.env` (gitignored) and run `kb rebuild`. Built-in health checks proactively warn you if cloud retrieval ever degrades back to local mode.
+
+### 4. Universal Multimodal Ingestion & Quality Gates (`v3.1.0–3.1.1`)
+- **Zero-Dependency Native Adapters**: `.md`, `.txt`, `.srt`, `.vtt`, `.html`, `.pdf` (macOS PDFKit), `.docx`, `.pptx`, `.epub`, `.csv`, `.png`/`.jpg`/`.webp`/`.heic` (auto-converted to JPEG for vision models), `.webloc`/`.url`/`.link` bookmarks, and `kb add --url`.
+- **Pluggable Audio & Video Transcription**: `.mp3`, `.m4a`, `.wav`, `.ogg`, `.flac`, `.aac`, `.mp4`, `.mov`, `.mkv`, `.webm` (`ffmpeg` audio extraction → cloud Whisper / SenseVoice → clean transcript into `raw/`, keeping Git lightweight). Run `kb adapters --json` to inspect adapter readiness.
+- **Dual Ingestion Gates**: Automatically deduplicates across `raw/` and `wiki/sources/` before ingestion, and enforces faithful localization of foreign-language sources with bilingual terminology preservation.
+
+### 5. Scientific Viral Content Deconstruction (`kb-viral-ingest`)
+- Separates text mechanics from non-textual confounders (account authority, traffic spikes, trending news).
+- Performs metric-specific causal attribution grounded in behavioral economics, cognitive psychology, social psychology, and narratology — backed by counterfactual tests, minimal-diff negative-sample comparisons, and domain-agnostic reusable skeletons.
+
+### 6. Evidence-Driven Adaptive Self-Evolution (`kb-evolve`)
+- Silently captures real query telemetry (zero-hit rates, latency, fallback patterns) and triggers diagnostic reviews on an adaptive backoff cadence (`5 → 10 → 20 → 40` ingested documents).
+- **Honest `model_ceiling` Brake**: Automatically hibernates evolution when hitting current architecture/model limits instead of churning rules blindly, waking up only when corpus growth or zero-hit pain warrants refinement — and evolves *future rules* without forcing disruptive rewrites of historical pages.
+
+---
+
+## Quick Start
 
 ```bash
-# 1. 克隆仓库并安装本地引擎
-git clone <your-repo-url> personal-okf-wiki
+# 1. Clone and install the deterministic local engine
+git clone https://github.com/aidenlychen-debug/personal-okf-wiki.git
 cd personal-okf-wiki
 python3 -m venv .venv
 .venv/bin/pip install -e .
 
-# 2. 幂等初始化目录树、数据库与 Git 环境
+# 2. Idempotently initialize directory layout, SQLite FTS5 DB, and Git repo
 .venv/bin/kb init
 
-# 3. 检查状态
-.venv/bin/kb status
+# 3. Verify vault health and adapter readiness
+.venv/bin/kb status --json
+.venv/bin/kb adapters --json
 ```
 
-## 作为统一 Skill 接入 AI Agent
+### Optional: Enable 98+ Cloud Hybrid Retrieval (`.kb/.env`)
 
-本仓库根目录已提供标准 [`SKILL.md`](./SKILL.md) 与顶层协作规范 [`AGENTS.md`](./AGENTS.md)，可直接挂载至 Claude Code、Cursor、Gemini、Codex 等 AI Agent 使用：
+```bash
+cat <<'EOF' > .kb/.env
+KB_EMBEDDING_API_KEY="your_api_key_here"
+KB_RERANK_API_KEY="your_api_key_here"
+EOF
+chmod 600 .kb/.env
+.venv/bin/kb rebuild --json
+```
 
-- `SKILL.md`：统一入口与 `kb` CLI 速查
-- `skills/kb-ingest/SKILL.md`：通用资料零污染清洗与中文原子编译
-- `skills/kb-viral-ingest/SKILL.md`：爆款文案与负样本对照的科学归因拆解
-- `skills/kb-query/SKILL.md`：双模式精准召回与五段式写作弹药包编排
-- `skills/kb-lint/SKILL.md`：OKF v0.3 合规巡检与知识库治理
-- `skills/kb-evolve/SKILL.md`：自适应架构自迭代与能力上限判断
+*(`.kb/.env` is automatically loaded on every CLI invocation and excluded via `.gitignore`.)*
 
-## 目录结构
+---
+
+## Agent Skill Integration
+
+Mount this repository directly in **Claude Code, Cursor, Gemini / Antigravity, or Codex**. The root [`SKILL.md`](./SKILL.md) and [`AGENTS.md`](./AGENTS.md) route agents to five specialized modular workflows:
+
+| Workflow | Skill Spec | Primary CLI Pipeline |
+|---|---|---|
+| **General Knowledge Ingestion** | [`skills/kb-ingest/SKILL.md`](./skills/kb-ingest/SKILL.md) | `kb scan` / `kb add` → `kb compile-begin` → `kb compile-commit` |
+| **Scientific Viral Deconstruction** | [`skills/kb-viral-ingest/SKILL.md`](./skills/kb-viral-ingest/SKILL.md) | `kb query` (contrast) → causal attribution & skeleton → `kb compile-commit` |
+| **Dual-Mode Retrieval & Writing Pack** | [`skills/kb-query/SKILL.md`](./skills/kb-query/SKILL.md) | `kb query "<topic>" --mode creator\|student --json` |
+| **Governance, Audit & Refactoring** | [`skills/kb-lint/SKILL.md`](./skills/kb-lint/SKILL.md) | `kb lint` / `kb audit` / `kb refactor rename\|merge` |
+| **Adaptive Self-Evolution** | [`skills/kb-evolve/SKILL.md`](./skills/kb-evolve/SKILL.md) | `kb evolve-report` → evidence review → `kb evolve-mark` |
+
+---
+
+## CLI Cheat Sheet
+
+All commands support `--json` with a strict machine contract (`{"ok": true, ...}` / `{"ok": false, "error_code": "...", ...}`):
+
+```bash
+# Ingest & Transactional Compile
+kb scan --json                                             # Scan inbox/ across all supported formats
+kb add --text "<clean text>" --title "<title>" --json      # Capture quick insight or note
+kb add --url "https://..." --title "<title>" --json        # Fetch web article as clean Markdown
+kb compile-begin --limit 10 --json                         # Snapshot human edits & lock compile batch
+kb compile-commit --session <id> --note "<summary>" --json # Validate locks, reindex & commit atomically
+kb recover --json                                          # Zero-loss crash recovery across Git + SQLite
+
+# Lock-Free Concurrent Queries
+kb query "<keywords>" --mode creator --json                # Full-vault creator retrieval
+kb query "<keywords>" --mode student --json                # Public + stable + verified Q&A mode
+
+# Governance & Maintenance
+kb lint --json                                             # Validate OKF v0.3 schema, relative links & locks
+kb audit --json                                            # Readiness, orphan, deprecated & dedup audit
+kb refactor rename concepts/old.md concepts/new.md --json  # Atomic link-safe rename
+kb refactor merge concepts/dup.md concepts/main.md --json  # Atomic link-safe merge
+kb evolve-report --json                                    # Telemetry diagnostics & delta metrics
+kb rebuild --json                                          # Lossless rebuild of .kb/kb.db from raw/ + wiki/
+```
+
+---
+
+## Repository Structure
 
 ```text
 personal-okf-wiki/
-├── SKILL.md                  # 统一 Skill 顶层入口
-├── AGENTS.md                 # 多 Agent 协作宪法与工程铁律
-├── config.yaml               # 检索权重、安全锁、适配器、云端 API 与自迭代配置
-├── pyproject.toml            # Python 包与 `kb` CLI 入口定义
-├── src/kb_engine/            # 确定性核心引擎（SQLite FTS5 / 图谱 / 事务 / 自迭代）
-├── skills/                   # 5 套模块化业务 Skill 规范
-├── scripts/                  # 基线重置脚本（reset-to-baseline.sh）
-├── docs/                     # Obsidian 配合使用说明
-├── inbox/                    # 素材投递箱（原始文件入口）
-├── raw/                      # 不可变、已清洗的干净原文档案室
-└── wiki/                     # 编译后的 OKF v0.3 原子知识库（sources/concepts/cases/evidences/insights）
+├── SKILL.md                  # Unified Agent Skill entrypoint & CLI routing
+├── AGENTS.md                 # Multi-agent collaboration constitution & engineering invariants
+├── config.yaml               # Retrieval weights, safety locks, adapters, cloud API & evolution config
+├── pyproject.toml            # Python package metadata & `kb` CLI entrypoint
+├── src/kb_engine/            # Deterministic core engine (SQLite FTS5, graph, WAL transactions, evolution)
+│   └── adapters/             # Multimodal format decoders (PDF, Office, EPUB, HTML, Images, URL, Media)
+├── skills/                   # 5 modular domain Agent Skills (ingest, viral-ingest, query, lint, evolve)
+├── docs/                     # Obsidian integration guide (docs/obsidian-setup.md)
+├── scripts/                  # Baseline reset helper (reset-to-baseline.sh)
+├── inbox/                    # Raw dropbox for incoming materials (created by `kb init`)
+├── raw/                      # Immutable cleaned source archive (created by `kb init`)
+└── wiki/                     # Compiled OKF v0.3 atomic knowledge base (sources/concepts/cases/evidences/insights)
 ```
 
-## 常用维护命令
+---
 
-```bash
-.venv/bin/kb lint             # 校验 Frontmatter、相对链接与安全锁
-.venv/bin/kb audit            # 治理审计（学员就绪度/废弃/孤儿/重复候选/V3 覆盖）
-.venv/bin/kb evolve-report    # 查看入库与召回遥测诊断报告
-.venv/bin/kb rebuild          # 从 raw/ 与 wiki/ 无损重建 .kb/kb.db
-```
+## License
 
-## 许可协议（License）
+**Free for Personal & Non-Commercial Use; Commercial Use Requires Prior Written Authorization.**
 
-本项目采用 **个人使用免费、商用需授权** 许可协议，详见 [`LICENSE`](./LICENSE)：
-- **个人与非商业用途**：免费使用、学习与修改（须保留版权与许可声明）。
-- **商业用途**：包括但不限于付费服务/SaaS、学员付费问答、打包进付费课程/社群、企业商业部署等，均须事先联系作者获取书面授权。
+- **Personal / Non-Commercial Use**: Individuals may freely use, copy, study, and modify this software, documentation, and bundled Agent Skills for personal learning and non-commercial purposes (retaining the copyright and license notice).
+- **Commercial Use**: Any commercial usage — including paid services/SaaS, paid student/customer Q&A systems, bundling into paid courses/communities, or internal commercial deployment by companies/teams — requires **prior written authorization** from the author. See [LICENSE](./LICENSE) for full legal terms.
